@@ -1,0 +1,385 @@
+---
+title: "Lista 31-03"
+author: "Rafael Silva Wagner"
+date: "31 de março de 2018"
+output: html_document
+---
+
+Abaixo seguem os códigos com os resultados dos exercícios computacionais da lista 2. Inicialmente carreguemos os pacotes necessários.
+
+````{r, message=F, warning=F}
+require(metRology)
+require(caret)
+require(ggplot2)
+require(graphics)
+require(tidyverse)
+```
+
+##Exercicio 3
+
+Carregue os dados do enunciado:
+
+```{r}
+s=1000
+mu=1
+sigma2=3
+samples<-rnorm(s,mu,sigma2)
+```
+
+#letra a
+```{r}
+#Simule os dados:
+samples<-rnorm(s,mu,sigma2)
+
+#Priori 1
+priori1<-c(1,10,10,24)
+
+#Posteriori para a Priori !
+mu_p1<-(priori1[2]*priori1[1]+s*mean(samples))/(priori1[2]+s)
+k_n1<-priori1[2]+s
+alfa_n1<-priori1[3]+s/2
+beta_n1<-priori1[4]+sum((samples-mean(samples))^2)/2+
+  priori1[2]*s*(mean(samples)-priori1[1])^2/
+  (2*(priori1[2]+s))
+
+#PRIORI 1
+#    mio,ko,alfao,betao
+priori2<-c(1,1,5,9)
+
+#posteriori
+mu_p2<-(priori2[2]*priori2[1]+s*mean(samples))/(priori2[2]+s)
+k_n2<-priori2[2]+s
+alfa_n2<-priori2[3]+s/2
+beta_n2<-priori2[4]+sum((samples-mean(samples))^2)/(2)+
+  priori2[2]*s*(mean(samples)-priori2[1])^2/(2*(priori2[2]+s))
+```
+
+Criemos uma função para amostrar da normal-gamma
+
+```{r}
+rnormgamma <- function(n, mu, k, alpha, beta) {
+  if (length(n) > 1) 
+    n <- length(n)
+  var <- rgamma(n, alpha, beta)
+  mi <- rnorm(n, mu, sqrt(1/(k*var)))
+  data.frame(mi = mi, var = var)
+}
+```
+
+Plotemos os histogramas de mu:
+
+```{r}
+m=10000
+d = data.frame(x = c(rnormgamma(m,mu_p1,k_n1,alfa_n1,beta_n1)[,1], rnormgamma(m,mu_p2,k_n2,alfa_n2,beta_n2)[,1]), 
+               type=rep(c("Priori 1", "Priori 2"), c(length(rnormgamma(m,mu_p1,k_n1,alfa_n1,beta_n1)[,1]), length(rnormgamma(m,mu_p2,k_n2,alfa_n2,beta_n2)[,1]))))
+ggplot(d) + 
+  geom_histogram(aes(x=x, colour=type))
+```
+
+Plotemos os histogramas de Sigma:
+
+```{r}
+d = data.frame(x = c(sqrt(1/rnormgamma(m,mu_p1,k_n1,alfa_n1,beta_n1)[,2]), sqrt(1/rnormgamma(m,mu_p2,k_n2,alfa_n2,beta_n2)[,2])), 
+               type=rep(c("Priori 1", "Priori 2"), c(length(rnormgamma(m,mu_p1,k_n1,alfa_n1,beta_n1)[,2]), length(rnormgamma(m,mu_p2,k_n2,alfa_n2,beta_n2)[,2]))))
+ggplot(d) + 
+  geom_histogram(aes(x=x, colour=type))
+```
+
+Façamos agora com 100 observações e sobreporemos a densidade
+
+```{r}
+#muda o valor da amostra
+m=100
+
+d = data.frame(x = c(rnormgamma(m,mu_p1,k_n1,alfa_n1,beta_n1)[,1], rnormgamma(m,mu_p2,k_n2,alfa_n2,beta_n2)[,1]), 
+               type=rep(c("Priori 1", "Priori 2"), c(length(rnormgamma(m,mu_p1,k_n1,alfa_n1,beta_n1)[,1]), length(rnormgamma(m,mu_p2,k_n2,alfa_n2,beta_n2)[,1]))))
+
+h1 <- hist(d$x[1:100], plot=FALSE) #generate hist
+h2 <- hist(d$x[101:200], plot=FALSE) #generate hist
+plot(h1, col="grey") #plot hist
+plot(h2, col="blue", add=T)
+xlines1 <-seq(min(h1$breaks),max(h1$breaks),length.out=100) #seq of x for pdf
+lines(x = xlines1,y=dt.scaled(xlines1,df=2*alfa_n1, mean = mu_p1, sd = beta_n1/(alfa_n1*k_n1))
+                             *length(d$x)/2*diff(h1$breaks)[1],"p")
+xlines2 <-seq(min(h2$breaks),max(h2$breaks),length.out=100) #seq of x for pdf
+lines(x = xlines2,y=dt.scaled(xlines2,df=2*alfa_n2, mean = mu_p2, sd = beta_n2/(alfa_n2*k_n2))
+                             *length(d$x)/2*diff(h2$breaks)[1])
+
+
+```
+
+
+Histogramas de sigma com 100 observações e duas priorias:
+
+```{r}
+d = data.frame(x = c(sqrt(1/rnormgamma(m,mu_p1,k_n1,alfa_n1,beta_n1)[,2]), sqrt(1/rnormgamma(m,mu_p2,k_n2,alfa_n2,beta_n2)[,2])), 
+               type=rep(c("Priori 1", "Priori 2"), c(length(rnormgamma(m,mu_p1,k_n1,alfa_n1,beta_n1)[,2]), length(rnormgamma(m,mu_p2,k_n2,alfa_n2,beta_n2)[,2]))))
+
+
+
+
+h1 <- hist(d$x[1:100], plot=FALSE) #generate hist
+h2 <- hist(d$x[101:200], plot=FALSE) #generate hist
+plot(h1, col="grey") #plot hist
+plot(h2, col="blue", add=T)
+xlines1 <-seq(min(h1$breaks),max(h1$breaks),length.out=100) #seq of x for pdf
+lines(x = xlines1,y=dgamma(1/((xlines1)^2),alfa_n1,beta_n1)
+                             *length(d$x)/2*diff(h1$breaks)[1],"p")
+xlines2 <-seq(min(h2$breaks),max(h2$breaks),length.out=100) #seq of x for pdf
+lines(x = xlines2,y=dgamma(1/((xlines2)^2),alfa_n2,beta_n2)
+                             *length(d$x)/2*diff(h2$breaks)[1])
+
+```
+
+```{r}
+
+
+```
+
+
+##Exercicio 6
+
+#letra a
+Geramos uma amostra de tamanho N, intercepto 0, beta 1 e variancia/precisão 1
+```{r}
+N=100
+a=0
+b=1
+h=1
+x=cbind(1,(runif(N, min = 0, max = 1)))
+y=x%*%matrix(c(a,b))+rnorm(N,mean=0,sd=sqrt(1/h))
+```
+
+Defina uma priori como definido no enunciado
+```{r}
+priori_b=c(0,1)
+priori_V=diag(2)
+priori_h=1
+priori_v=1
+```
+
+Ache os caras de minimos quadrados
+```{r}
+ols<-summary(lm(y~x,data.frame(y=y,x=x[,2])))
+ols_b<-matrix(ols$coefficients[,1])
+ols_h<-((ols$sigma)^2)^-1
+ols_v<-ols$df[2]
+```
+
+Pega a posteriori
+```{r}
+posteriori_V=solve(solve(priori_V)+t(x)%*%x)
+posteriori_b=posteriori_V%*%(solve(priori_V)%*%priori_b+t(x)%*%x%*%ols_b)
+posteriori_v=priori_v+ols_v
+posteriori_h=((priori_v%*%priori_h^-1+ols_v%*%priori_h^-1+
+  t(ols_b-priori_b)%*%(priori_V+solve(t(x)%*%x))%*%(ols_b-priori_b))/posteriori_v)^-1
+```
+
+Da uma olhada na Posteriori  de B2
+```{r}
+ggplot(data.frame(x = c(0, 1.5)), aes(x)) + 
+  stat_function(fun = dt.scaled,
+                                                         args = list(df=posteriori_v, mean = posteriori_b[2,],
+                                                                    sd = (posteriori_V*(c(posteriori_h^-1)))[2,2]))
+```
+
+A probabilidade de o modelo irrestrito ser o verdadeiro em relação ao restrito é de
+```{r}
+ols_r<-summary(lm(y~1,data.frame(y=y,x=x[,2])))
+ols_r_b<-matrix(ols_r$coefficients[,1])
+ols_r_h<-((ols_r$sigma)^2)^-1
+ols_r_v<-ols_r$df[2]
+
+
+posteriori_r_V=solve(solve(priori_V[1,1])+t(x[,1])%*%x[,1])
+posteriori_r_b=posteriori_r_V%*%(solve(priori_V[1,1])%*%priori_b[1]+t(x[,1])%*%x[,1]%*%ols_r_b)
+posteriori_r_v=priori_v+ols_r_v
+posteriori_r_h=((priori_v%*%priori_h^-1+ols_r_v%*%priori_h^-1+
+                 t(ols_r_b-priori_b[1])%*%(priori_V[1,1]+solve(t(x[,1])%*%x[,1]))%*%
+                   (ols_r_b-priori_b[1]))/posteriori_r_v)^-1
+
+c<-gamma(posteriori_v/2)*((priori_v*priori_h^-1)^(posteriori_v/2))/(gamma(priori_v/2)*pi^(N/2))
+cr<-gamma(posteriori_r_v/2)*((priori_v*priori_h^-1)^(posteriori_r_v/2))/(gamma(priori_v/2)*pi^(N/2))
+
+
+bayes_factor=(c/cr)*(sqrt(det(posteriori_V)/det(priori_V))/sqrt(posteriori_r_V/priori_V[1,1]))*
+  ((posteriori_v*posteriori_h^-1)^(-posteriori_v/2)/(posteriori_r_v*posteriori_r_h^-1)^(-posteriori_r_v/2))
+
+bayes_factor
+```
+
+Plota a densidade preditiva conforme solicitado
+
+```{r}
+forec<-matrix(c(1,0.5))
+
+ggplot(data.frame(x = c(-3, 5)), aes(x)) + stat_function(fun = dt.scaled,colour = '#990066',
+                                                         args = list(df=posteriori_v, mean =c(t(forec)%*%posteriori_b),
+                                                                     sd=c((posteriori_h^-1)*(diag(1)+t(forec)%*%posteriori_V%*%forec))))
+
+
+```
+
+Faz a análise de sensibilidade e plota a densidade preditiva
+```{r}
+c<-c(0.01,1,100,100000)
+
+posteriori_simu_V<-array(data=NA,dim=c(2,2,4))
+posteriori_simu_b<-array(data=NA,dim=c(2,1,4))
+posteriori_simu_v<-rep(NA,4)
+posteriori_simu_h<-rep(NA,4)
+bayes_simu_factor<-rep(NA,4)
+density_simu_forec<-data.frame(x=rep(NA,1000000*4),priori=NA)
+for(i in 1:length(c)){
+  priori_b=c(0,1)
+  priori_V=diag(2)*c[i]
+  priori_h=1
+  priori_v=1
+  
+  posteriori_simu_V[,,i]=solve(solve(priori_V)+t(x)%*%x)
+  posteriori_simu_b[,,i]=posteriori_simu_V[,,i]%*%(solve(priori_V)%*%priori_b+t(x)%*%x%*%ols_b)
+  posteriori_simu_v[i]=priori_v+ols_v
+  posteriori_simu_h[i]=((priori_v%*%priori_h^-1+ols_v%*%priori_h^-1+
+                   t(ols_b-priori_b)%*%(priori_V+solve(t(x)%*%x))%*%(ols_b-priori_b))/posteriori_simu_v[i])^-1
+  
+  
+  posteriori_r_V=solve(solve(priori_V[1,1])+t(x[,1])%*%x[,1])
+  posteriori_r_b=posteriori_r_V%*%(solve(priori_V[1,1])%*%priori_b[1]+t(x[,1])%*%x[,1]%*%ols_r_b)
+  posteriori_r_v=priori_v+ols_r_v
+  posteriori_r_h=((priori_v%*%priori_h^-1+ols_r_v%*%priori_h^-1+
+                 t(ols_r_b-priori_b[1])%*%(priori_V[1,1]+solve(t(x[,1])%*%x[,1]))%*%
+                 (ols_r_b-priori_b[1]))/posteriori_r_v)^-1
+
+  ci<-gamma(posteriori_simu_v[i]/2)*((priori_v*priori_h^-1)^(posteriori_simu_v[i]/2))/(gamma(priori_v/2)*pi^(N/2))
+  cr<-gamma(posteriori_r_v/2)*((priori_v*priori_h^-1)^(posteriori_r_v/2))/(gamma(priori_v/2)*pi^(N/2))
+
+
+  bayes_factor=(ci/cr)*(sqrt(det(posteriori_simu_V[,,i])/det(priori_V))/sqrt(posteriori_r_V/priori_V[1,1]))*
+    ((posteriori_simu_v[i]*posteriori_simu_h[i]^-1)^(-posteriori_simu_v[i]/2)/
+       (posteriori_r_v*posteriori_r_h^-1)^(-posteriori_r_v/2))
+
+  bayes_simu_factor[i]<-bayes_factor
+
+  
+}
+
+#apresentemos os resultados para
+posteriori_simu_V
+posteriori_simu_b
+posteriori_simu_v
+posteriori_simu_h
+bayes_simu_factor
+
+ggplot(data.frame(x = c(-3, 5)), aes(x)) + 
+  stat_function(fun = dt.scaled,
+                colour = "red",
+                args = list(df=posteriori_simu_v[1], mean =c(t(forec)%*%posteriori_simu_b[,,1]),
+                            sd=c((posteriori_simu_h[1]^-1)*(diag(1)+t(forec)%*%posteriori_simu_V[,,1]%*%forec)))) +
+  stat_function(fun = dt.scaled,
+                colour = 'pink',
+                args = list(df=posteriori_simu_v[2], mean =c(t(forec)%*%posteriori_simu_b[,,2]),
+                            sd=c((posteriori_simu_h[2]^-1)*(diag(1)+t(forec)%*%posteriori_simu_V[,,2]%*%forec))))+
+  stat_function(fun = dt.scaled,
+                colour = "yellow",
+                args = list(df=posteriori_simu_v[3], mean =c(t(forec)%*%posteriori_simu_b[,,3]),
+                            sd=c((posteriori_simu_h[3]^-1)*(diag(1)+t(forec)%*%posteriori_simu_V[,,3]%*%forec))))+
+  stat_function(fun = dt.scaled,
+                args = list(df=posteriori_simu_v[4], mean =c(t(forec)%*%posteriori_simu_b[,,4]),
+                            sd=c((posteriori_simu_h[4]^-1)*(diag(1)+t(forec)%*%posteriori_simu_V[,,4]%*%forec))))
+```
+
+
+Os parâmetros com uma priori não informativa são encontrados através dos estimadores de minimos quadrados
+```{r}
+non_inf_V<-solve(t(x)%*%x)
+non_inf_B<-solve(t(x)%*%x)%*%t(x)%*%y
+non_inf_v<-N
+non_inf_s<-((ols$sigma))*solve(t(x)%*%x)
+```
+
+Encontra a banda inferior da priori considerando um intervalo de confiança de 99%
+```{r}
+IC<-(1-0.99)/2
+lower_bound<-qt.scaled(p=c(IC), df=non_inf_v,
+          mean =c(non_inf_B[2,1]), 
+          sd =last(c((non_inf_s^2)%*%non_inf_V)),
+          lower.tail = TRUE)
+
+lower_bound
+```
+
+Nós já haviamos verificado que a hipótese de b=0 não era muito sugerida, agora nós verificamos que com uma
+priori não informativa o HPDI de 99% não contém o zero indo ao encontro dos resultados anteriores
+
+##Exercicios 8
+
+Carrega o grid, iremos simular uma amoatra indo de 10 a 250 observações aumentando de 10 em 10 observações e variância de 1 a 10 aumentando de 1 em 1.
+```{r}
+Ns<-seq(from=10,by=10,to=250)
+sigma2s<-seq(from=1,to=10,by=1)
+
+grid_beta<-array(data=NA,dim=c(length(Ns),length(sigma2s)))
+dimnames(grid_beta)=list(rows=Ns,cols=sigma2s)
+grid_PO<-array(data=NA,dim=c(length(Ns),length(sigma2s)))
+dimnames(grid_PO)=list(rows=Ns,cols=sigma2s)
+```
+
+
+Vamos acompanhar a esperança de B2 e a razão de chances contra a hipótese de B2=0
+```{r}
+for(i in 1:length(Ns)){
+  for(j in 1:length(sigma2s)){
+    N=Ns[i]
+    a=0
+    b=1
+    h=sigma2s[j]
+    x=cbind(1,(runif(N, min = 0, max = 1)))
+    y=x%*%matrix(c(a,b))+rnorm(N,mean=0,sd=sqrt(1/h))
+    
+    priori_b=c(0,1)
+    priori_V=diag(2)
+    priori_h=1
+    priori_v=1
+    
+    ols<-summary(lm(y~x,data.frame(y=y,x=x[,2])))
+    ols_b<-matrix(ols$coefficients[,1])
+    ols_h<-((ols$sigma)^2)^-1
+    ols_v<-ols$df[2]
+    
+    posteriori_V=solve(solve(priori_V)+t(x)%*%x)
+    posteriori_b=posteriori_V%*%(solve(priori_V)%*%priori_b+t(x)%*%x%*%ols_b)
+    posteriori_v=priori_v+ols_v
+    posteriori_h=((priori_v%*%priori_h^-1+ols_v%*%priori_h^-1+
+      t(ols_b-priori_b)%*%(priori_V+solve(t(x)%*%x))%*%(ols_b-priori_b))/posteriori_v)^-1
+    
+    ols_r<-summary(lm(y~1,data.frame(y=y,x=x[,2])))
+    ols_r_b<-matrix(ols_r$coefficients[,1])
+    ols_r_h<-((ols_r$sigma)^2)^-1
+    ols_r_v<-ols_r$df[2]
+    
+    
+    posteriori_r_V=solve(solve(priori_V[1,1])+t(x[,1])%*%x[,1])
+    posteriori_r_b=posteriori_r_V%*%(solve(priori_V[1,1])%*%priori_b[1]+t(x[,1])%*%x[,1]%*%ols_r_b)
+    posteriori_r_v=priori_v+ols_r_v
+    posteriori_r_h=((priori_v%*%priori_h^-1+ols_r_v%*%priori_h^-1+
+                     t(ols_r_b-priori_b[1])%*%(priori_V[1,1]+solve(t(x[,1])%*%x[,1]))%*%
+                       (ols_r_b-priori_b[1]))/posteriori_r_v)^-1
+    
+    c<-gamma(posteriori_v/2)*((priori_v*priori_h^-1)^(posteriori_v/2))/(gamma(priori_v/2)*pi^(N/2))
+    cr<-gamma(posteriori_r_v/2)*((priori_v*priori_h^-1)^(posteriori_r_v/2))/(gamma(priori_v/2)*pi^(N/2))
+    
+    bayes_factor=(c/cr)*(sqrt(det(posteriori_V)/det(priori_V))/sqrt(posteriori_r_V/priori_V[1,1]))*
+      ((posteriori_v*posteriori_h^-1)^(-posteriori_v/2)/(posteriori_r_v*posteriori_r_h^-1)^(-posteriori_r_v/2))
+    
+    grid_beta[i,j]<-posteriori_b[2]
+    grid_PO[i,j]<-bayes_factor
+  }
+}
+```
+
+Apresenta a simulação de da esperança B2 e de PO
+
+```{r}
+grid_beta
+grid_PO
+```
