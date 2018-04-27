@@ -1,0 +1,551 @@
+---
+title: "Lista 3"
+author: "Rafael Silva Wagner"
+date: "9 de abril de 2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r, message=F, warning=F}
+set.seed(1)
+require(mvtnorm)
+require(invgamma)
+require(forecast)
+library(reshape2)
+library(ggplot2)
+require(matrixStats)
+require(moments)
+```
+
+##Questão 1
+
+Carregue os hiperparâmetros
+```{r}
+media<-c(1,3)
+var<-matrix(c(1,0.4,0.4,2),nrow=2)
+```
+
+
+#Letra A e B
+Gera amostra de z, encontra a média de z e a variância da média de z para S=1.000,10.000,100.000. Sempre com amostras de 100 observações
+
+Letra a
+Na primeira linha da tabela estão apresentadas as estimativas para a média.
+
+Letra b 
+Na terceira linha da tabela estão apresentadas as estimativas para a o desvio padrão numérico.
+
+Obs. A linha do meio é apenas para melhorar a interpretação do leitor informando a variância amostral:
+
+```{r}
+n_amostra=c(1000,10000,100000)
+
+sample<-matrix(rep(NA,length(n_amostra)*3),nrow=3)
+
+colnames(sample)<-n_amostra
+rownames(sample)<-c("mean_z","sigma_z","num_std")
+
+for(j in 1:length(n_amostra)){
+ amostra<-rmvnorm(n_amostra[j],mean=media,sigma=var)
+ z<-amostra[,1]*amostra[,2]  
+ sample[1,j]<-mean(z)
+ sample[2,j]<-var(z)
+ sample[3,j]<-sd(z)/sqrt(n_amostra[j])
+}
+
+sample
+
+```
+
+
+##Questão 2
+
+Carregue os hiperparâmetros
+```{r}
+media<-0
+var<-1
+```
+
+#Letras a,b,c
+
+Letra A
+O próprio algoritmo é a letra A
+
+Letra B
+As estimativas do desvio padrão númérico estão na terceira linha da tabela apresentada
+
+Letra C
+As colunas representam as diferentes amostras, os rótulos delas fazem referência a amostra usada para gerar cada estimativa.
+
+Obs. Para melhorar a interpretação para o leito se adicionou também a estimativa da média e variância amsotral.
+```{r}
+n_amostra=c(30,1000,10000)
+
+sample<-matrix(rep(NA,length(n_amostra)*3),nrow=3)
+
+colnames(sample)<-n_amostra
+rownames(sample)<-c("mean_theta","sigma_theta","num_std")
+
+for(j in 1:length(n_amostra)){
+ theta<-rnorm(n_amostra,mean = 0, sd = 1)
+ sample[1,j]<-mean(theta)
+ sample[2,j]<-var(theta)
+ sample[3,j]<-sd(theta)/sqrt(n_amostra[j])
+}
+
+sample
+```
+
+#Letra d
+como sabemos a verdadeira variância e sabemos a densidade da normal o valor relacionado a um erro de 1 porcento na distribuição normal é 
+```{r}
+erro=0.01
+alfa=0.05
+amostra_necess<-(qnorm(1-alfa/2,mean=0,sd=1)/erro)^2
+amostra_necess
+```
+
+Gera mil amostras do tamanho ótimo necessário, verifica se o valor apresentado é próximo a 0,05
+
+```{r}
+m=1000
+medias<-rep(NA,m)
+
+for(j in 1:m){
+  medias[j]<-mean(rnorm(amostra_necess))
+}
+
+sum(abs(medias)>0.01)/length(medias)
+
+```
+
+
+#Questão 3
+
+#letra a
+Carregue os hiperparâmetros, vamos deixar rho igual a 0,5 por enquanto
+```{r}
+p=0.5
+mus<-c(0,0)
+cov<-matrix(c(1,p,p,1),nrow=2)
+```
+
+Calcula a média e variância de x1 e x2
+
+```{r}
+#Monte-Carlo
+S=100
+resultado<-matrix(NA,nrow=2,ncol=2)
+row.names(resultado)<-c("mean","variance")
+colnames(resultado)<-c("x1","x2")
+resultado[1,]<-colMeans(rmvnorm(S,mus,cov))
+resultado[2,]<-colVars(rmvnorm(S,mus,cov))
+resultado
+```
+
+
+#Letra b
+
+Apresenta as estimativas para média e variância de x1,x2
+```{r}
+#carrega os hiperparâmetros
+rho<-0.5
+mean<-0
+var<-1
+S=100
+
+#carrega os vetores
+x1<-vector()
+x2<-vector()
+
+#Coloca o ponto de partida
+x1[1]<-0
+
+
+#Faz a simulação
+for(i in 2:(S+1)){
+  x2[i]<-rnorm(1,mean=mean+rho*(x1[i-1]-mean),sd=sqrt(1-rho^2))
+  x1[i]<-rnorm(1,mean=mean+rho*(x2[i]-mean),sd=sqrt(1-rho^2))
+}
+
+#Apresenta as estimativas
+resultado<-matrix(NA,nrow=2,ncol=2)
+row.names(resultado)<-c("mean","std dp")
+colnames(resultado)<-c("x1","x2")
+resultado[1,]<-c(mean(x1,na.rm=TRUE),mean(x2,na.rm=TRUE))
+resultado[2,]<-c(sd(x1,na.rm=TRUE),sd(x2,na.rm=TRUE))
+resultado
+
+```
+
+
+#Letra c
+
+Repete a mesma simulação agora modificando os valores para rho:
+
+```{r}
+#Define os rhos
+rhos=c(0,0.5,0.99,0.999)
+
+#Cria uma matriz para guardar o resultado 
+resultado<-matrix(NA,nrow=2*length(rhos),ncol=2)
+row.names(resultado)<-paste(rep(c("mean","std_dp"),c(length(rhos),length(rhos))),"rho",rhos)
+colnames(resultado)<-c("x1","x2")
+
+
+#carrega os hiperparâmetros
+mean<-0
+var<-1
+S=100
+
+#carrega os vetores
+x1<-matrix(nrow=S+1,ncol=length(rhos))
+x2<-matrix(nrow=S+1,ncol=length(rhos))
+
+for(j in 1:length(rhos)){
+  rho=rhos[j]
+  
+  #Coloca o ponto de partida
+  x1[1,j]<-0
+  
+  
+  #Faz a simulação
+  for(i in 2:(S+1)){
+    x2[i,j]<-rnorm(1,mean=mean+rho*(x1[i-1,j]-mean),sd=sqrt(1-rho^2))
+    x1[i,j]<-rnorm(1,mean=mean+rho*(x2[i,j]-mean),sd=sqrt(1-rho^2))
+  }
+  
+  #Apresenta as estimativas
+
+  resultado[j,]<-c(mean(x1[,j],na.rm=TRUE),mean(x2[,j],na.rm=TRUE))
+  resultado[j+4,]<-c(sd(x1[,j],na.rm=TRUE),sd(x2[,j],na.rm=TRUE))
+}
+
+
+```
+
+Podemos ver na tabela abaixo que conforme o rho aumenta a estimativa para o desvio padrão cada vez mais se distancia do verdadeiro desvio padrão:
+```{r}
+resultado
+
+x1<-data.frame(x1)
+x2<-data.frame(x2)
+colnames(x1)<-paste("rhos",rhos,sep="_")
+colnames(x2)<-paste("rhos",rhos)
+```
+
+Gera um gráfico de x1
+
+```{r}
+gg <- melt(x1)
+ggplot(gg, aes(x=value, fill=variable)) +
+  geom_histogram(binwidth=0.1)+
+  facet_grid(variable~.)
+
+```
+
+Gera um gráfico de x2
+
+```{r}
+
+gg <- melt(x2)
+ggplot(gg, aes(x=value, fill=variable)) +
+  geom_histogram(binwidth=0.1)+
+  facet_grid(variable~.)
+```
+
+#Letra D
+
+Vamos fazer tudo denovo
+
+```{r}
+#Define os rhos
+rhos=c(0,0.5,0.99,0.999)
+
+#Cria uma matriz para guardar o resultado 
+resultado<-matrix(NA,nrow=2*length(rhos),ncol=2)
+row.names(resultado)<-paste(rep(c("mean","std_dp"),c(length(rhos),length(rhos))),"rho",rhos)
+colnames(resultado)<-c("x1","x2")
+
+
+#carrega os hiperparâmetros
+
+mean<-0
+var<-1
+S=10000
+
+#carrega os vetores
+x1<-matrix(nrow=S+1,ncol=length(rhos))
+x2<-matrix(nrow=S+1,ncol=length(rhos))
+
+for(j in 1:length(rhos)){
+  rho<-rhos[j]
+  
+  #Coloca o ponto de partida
+  x1[1,j]<-0
+  
+  
+  #Faz a simulação
+  for(i in 2:(S+1)){
+    x2[i,j]<-rnorm(1,mean=mean+rho*(x1[i-1,j]-mean),sd=sqrt(1-rho^2))
+    x1[i,j]<-rnorm(1,mean=mean+rho*(x2[i,j]-mean),sd=sqrt(1-rho^2))
+  }
+  
+  #Apresenta as estimativas
+
+  resultado[j,]<-c(mean(x1[,j],na.rm=TRUE),mean(x2[,j],na.rm=TRUE))
+  resultado[j+4,]<-c(sd(x1[,j],na.rm=TRUE),sd(x2[,j],na.rm=TRUE))
+}
+
+```
+
+Podemos ver que o mesmo padrão se repete quando  aumenta a amostra, mas o desvio padrão e a variância parecem ter convergido mais:
+
+
+```{r}
+resultado
+x1<-data.frame(x1)
+x2<-data.frame(x2)
+colnames(x1)<-paste("rhos",rhos,sep="_")
+colnames(x2)<-paste("rhos",rhos)
+```
+
+Gera um gráfico de x1
+
+```{r}
+gg <- melt(x1)
+ggplot(gg, aes(x=value, fill=variable)) +
+  geom_histogram(binwidth=0.1)+
+  facet_grid(variable~.)
+
+```
+
+Gera um gráfico de x2
+
+```{r}
+
+gg <- melt(x2)
+ggplot(gg, aes(x=value, fill=variable)) +
+  geom_histogram(binwidth=0.1)+
+  facet_grid(variable~.)
+```
+
+
+#Questão 4
+
+#Letra a
+Gera uma amostra e plota o seu histograma
+```{r}
+N=10000
+shape1=2.7
+shape2=6.3
+sample<-rbeta(N,shape1,shape2)
+qplot(sample,geom="histogram",bins=50)
+```
+
+#Letra B
+Implementa o algoritmo
+```{r}
+vetor <- vector("numeric", N)
+vetor[1]<-0.5
+
+min<-0
+max<-1
+
+for (i in 2:N) {
+  can <-runif(1, min=min, max=max)
+  probability<-dbeta(can, shape1=shape1,shape2=shape2)*dunif(can, min=min, max=max)/
+  dbeta(vetor[i-1], shape1=shape1, shape2=shape2)*dunif(vetor[i-1], min=min, max=max)
+  aprob <- min(1, probability) 
+  u <- runif(1) 
+  if (u < aprob){
+    vetor[i] <- can
+  } else{
+    vetor[i] <- vetor[i-1]
+  }
+
+  
+}
+
+```
+
+#letra c
+Apresenta um histograma da amostra de metropolis-hasting(MH) e a amostra gerada diretamente pela função beta(Sample).
+Apresenta uma tabela com a média e variância das amostras.
+```{r}
+plotar<-data.frame(MH=vetor,Sample=sample)
+gg <- melt(plotar)
+ggplot(gg, aes(x=value, fill=variable)) +
+  geom_histogram(binwidth=0.1)+
+  facet_grid(variable~.)
+
+moments<-data.frame(Mean=colMeans(plotar),Var=colVars(as.matrix(plotar)))
+moments
+```
+#Letra D
+Podemos ver que apesar do histograma ser similar o algoritmo MH gera amostras com autocorrelação.
+
+```{r}
+Acf(plotar)
+```
+
+
+#Questão 5
+
+#letra a
+Carregue as informações
+```{r}
+data = read.csv("C://Users//rwagn//Documents//R//Bayesiana//ag-data.csv",sep=";",header=TRUE)
+covs<-colnames(data)
+y<-as.matrix(matrix(data[,1]))
+colnames(y)<-covs[1]
+x<-as.matrix(cbind(1,data[,2:5]))
+colnames(x)<-c("const",covs[2:5])
+```
+
+Carrega a priori
+```{r}
+beta0<-as.matrix(c(0,10,5000,10000,10000))
+inv_Vo<-solve(diag(c(10^8,25,2500^2,5000^2,5000^2)))
+so=1.25*10^8
+vo=5
+```
+
+
+Amostraremos 1000 observações de burn-in e após amostraremos 10.000 observações para a estimativa de monte carlo.
+
+```{r}
+burn_in<-1000
+MC<-10000
+montecarlo<-matrix(ncol=6,nrow=MC)
+colnames(montecarlo)<-c(colnames(x),"sigma")
+
+bmqo<-solve(t(x)%*%x)%*%t(x)%*%y
+sigma2<-t(y-x%*%bmqo)%*%(y-x%*%bmqo)/(nrow(x)-ncol(x))
+
+v=(nrow(x)+vo)
+
+for(i in 1:(burn_in+MC)){
+  V<-solve(inv_Vo+(t(x)%*%x)/as.numeric(sigma2))
+  Beta<-V%*%(inv_Vo%*%beta0+t(x)%*%y/as.numeric(sigma2))
+  
+  
+  beta_sample<-t(as.matrix(rmvnorm(1,Beta,V)))
+  
+  s2=(t(y-x%*%beta_sample)%*%(y-x%*%beta_sample)+vo*so)/v
+  sigma2<-1/rgamma(1,scale=(2/(v*s2))^1,shape=v*0.5)
+  if(i>burn_in){
+    montecarlo[i-burn_in,]<-c(beta_sample,sigma2)
+  }
+}
+```
+
+Realiza o teste de Geweke
+
+```{r}
+primeira<-montecarlo[0:(nrow(montecarlo)*0.1),]
+segunda<-montecarlo[0:(nrow(montecarlo)*0.4),]
+(colMeans(primeira)-colMeans(segunda))/sqrt(colVars(primeira)/(nrow(montecarlo)*0.1)+colVars(segunda)/(nrow(montecarlo)*0.4))
+
+```
+
+
+
+Apresenta um histograma da amostra, junto com a média e o desvio padrão dos 40% finais da amostra
+
+```{r}
+ggplot(data = melt(data.frame(montecarlo)), mapping = aes(x = value)) + 
+    geom_histogram(bins = 100) + facet_wrap(~variable, scales = 'free_x')
+ 
+moments<-t(matrix(c(colMeans(montecarlo[((0.6*nrow(montecarlo)):nrow(montecarlo)),]),colSds(montecarlo[((0.6*nrow(montecarlo)):nrow(montecarlo)),])),nrow=6))
+row.names(moments)<-c("Mean","Std_dev")
+colnames(moments)<-colnames(montecarlo)
+moments
+```
+
+Preve a residência
+
+```{r}
+predict<-rep(NA,nrow(montecarlo))
+
+for(i in 1:nrow(montecarlo)){
+  predict[i]<-rnorm(1,montecarlo[i,-6]%*%(c(1,5000,2,2,1)),sqrt(montecarlo[i,6]))
+}
+
+qplot(predict)
+mean(predict)
+```
+
+
+#Letra b
+
+Carrega a priori
+```{r}
+beta0<-as.matrix(c(0,0,0,0,0))
+inv_Vo<-diag(0,5)
+so=0
+vo=0
+```
+
+
+Amostraremos 1000 observações de burn-in e após amostraremos 10.000 observações para a estimativa de monte carlo.
+
+```{r}
+burn_in<-1000
+MC<-10000
+montecarlo<-matrix(ncol=6,nrow=MC)
+colnames(montecarlo)<-c(colnames(x),"sigma")
+
+bmqo<-solve(t(x)%*%x)%*%t(x)%*%y
+sigma2<-t(y-x%*%bmqo)%*%(y-x%*%bmqo)/(nrow(x)-ncol(x))
+
+v=(nrow(x)+vo)
+
+for(i in 1:(burn_in+MC)){
+  V<-solve(inv_Vo+(t(x)%*%x)/as.numeric(sigma2))
+  Beta<-V%*%(inv_Vo%*%beta0+t(x)%*%y/as.numeric(sigma2))
+  beta_sample<-t(as.matrix(rmvnorm(1,Beta,V)))
+  
+  s2=(t(y-x%*%beta_sample)%*%(y-x%*%beta_sample)+vo*so^2)/v
+  sigma2<-1/rgamma(1,scale=2/(s2*v),shape=v*0.5)
+  
+  if(i>burn_in){
+    montecarlo[i-burn_in,]<-c(beta_sample,sigma2)
+  }
+}
+```
+
+Realiza o teste de Geweke
+
+```{r}
+primeira<-montecarlo[0:(nrow(montecarlo)*0.1),]
+segunda<-montecarlo[(nrow(montecarlo)*(1-0.4)):nrow(montecarlo),]
+(colMeans(primeira)-colMeans(segunda))/sqrt(colVars(primeira)/(nrow(montecarlo)*0.1)+colVars(segunda)/(nrow(montecarlo)*0.4))
+```
+
+
+
+Apresenta um histograma da amostra, junto com a média e o desvio padrão dos 40% finais da amostra
+
+```{r}
+ggplot(data = melt(data.frame(montecarlo)), mapping = aes(x = value)) + 
+    geom_histogram(bins = 100) + facet_wrap(~variable, scales = 'free_x')
+ 
+moments<-t(matrix(c(colMeans(montecarlo[((0.6*nrow(montecarlo)):nrow(montecarlo)),]),colSds(montecarlo[((0.6*nrow(montecarlo)):nrow(montecarlo)),])),nrow=6))
+row.names(moments)<-c("Mean","Std_dev")
+colnames(moments)<-colnames(montecarlo)
+moments
+```
+
+Preve a residência
+
+```{r}
+predict<-rep(NA,nrow(montecarlo))
+for(i in 1:nrow(montecarlo)){
+  predict[i]<-rnorm(1,montecarlo[i,-6]%*%(c(1,5000,2,2,1)),sqrt(montecarlo[i,6]))
+}
+
+qplot(predict)
+mean(predict)
+```
