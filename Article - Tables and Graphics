@@ -1,0 +1,375 @@
+library(xts)
+library(ggplot2)
+require(PEIP)
+library(forecast)
+library(highfrequency)
+library(MCS)
+library(MASS)
+
+
+#Our File
+#load(file="C://Users//Usuario//Documents//forecasts_real.RData")
+
+
+#Our assets
+assets<-c("AAPL","EBAY","GS","MSFT","PG","ABT","BAC","CVX","GE","CAT")
+#Our models
+models<-c("HAR","Tree","Bagging","Cubist","Lasso","Bayes","Comb_POS","Comb_POS_1","DMA")
+
+forecasts_1<-list()
+for(asset in 1:length(assets)){
+  test_predicted<-read.csv(sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//predicted_1step_%s.csv",asset),row.names=1)
+  forecasts_1[[asset]]<-(test_predicted)
+}
+
+forecasts_5<-list()
+for(asset in 1:length(assets)){
+  test_predicted<-read.csv(sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//predicted_5step_%s.csv",asset),row.names=1)
+  forecasts_5[[asset]]<-(test_predicted)
+}
+
+#MSE Matrix
+MSE_1<-data.frame(matrix(NA,ncol=length(assets),nrow=(length(models))))
+colnames(MSE_1)<-paste(assets)
+rownames(MSE_1)<-models
+
+MCS_MSE_1<-MSE_1
+
+#QLIKE Matrix
+QLIKE_1<-data.frame(matrix(NA,ncol=length(assets),nrow=(length(models))))
+colnames(QLIKE_1)<-paste(assets)
+rownames(QLIKE_1)<-models
+
+MCS_QLIKE_1<-QLIKE_1
+
+#MSE Matrix
+MSE_5<-data.frame(matrix(NA,ncol=length(assets),nrow=(length(models))))
+colnames(MSE_5)<-paste(assets)
+rownames(MSE_5)<-models
+
+MCS_MSE_5<-MSE_5
+
+#QLIKE Matrix
+QLIKE_5<-data.frame(matrix(NA,ncol=length(assets),nrow=(length(models))))
+colnames(QLIKE_5)<-paste(assets)
+rownames(QLIKE_5)<-models
+
+MCS_QLIKE_5<-QLIKE_5
+
+
+NeweyWest<-function(Z,nlags){
+  #Z=reg
+  # Returns the Newey-West estimator of the asymptotic variance matrix
+  # INPUTS: Z, a nxk matrix with rows the vector zt'
+  #         nlags, the number of lags
+  #
+  # OUTPUTS: omegahat, the Newey-West estimator of the covariance matrix
+  
+  
+  n <- dim(Z)[1]
+  k <- dim(Z)[2]
+  
+  # de-mean the variables
+  Z = Z - matrix(1,nrow=nrow(Z),ncol=k)*t(matrix(colMeans(Z),nrow=k,ncol=nrow(Z)))
+  
+  gamma = -999*matrix(1,nlags,ncol=k)
+  samplevar = t(Z)%*%Z/n; # sample variance
+  omegahat = samplevar;
+  if(nlags > 0){
+    # sample autocovariances
+    for(ii in 1:nlags){
+      Zlag = rbind(matrix(0,ii,k),Z[1:(n-ii),])
+      gamma = (t(Z)%*%Zlag +t(Zlag)%*%Z)/n
+      weights = 1 - (ii/(nlags+1))
+      omegahat = omegahat + weights*gamma
+    }
+  }
+  omegahat
+}
+
+CPAtest<-function(loss1,loss2,tau, alpha, choice){
+  
+  # This function performs the asymptotic Conditional Predictive Ability Test
+  # INPUTS: loss1 and loss2, Tx1 vectors of losses over the out of sample period for the two models under consideration
+  #         tau, the forecast horizon
+  #         alpha, niminal risk level: 1%, 5%, 10%
+  #         choice: 1 if unconditional ; 2 if conditional
+  #
+  # OUTPUTS: teststat, the test statistic of the conditional predictive ability test
+  #          critval, the critical value of the test for a 5# level (the test is a chi square)
+  #          pval, the p-value of the test
+  #
+  # Raffaella Giacomini, 2003
+  
+  lossdiff1=loss1-loss2                                                     # loss diferential 
+  
+  TT = length(lossdiff1)
+  
+  if(choice==1){
+    instruments=matrix(1,TT,1)
+    lossdiff=lossdiff1
+    t=TT
+  }else{
+    instruments=cbind(matrix(1,TT-tau,1), lossdiff1[1:(TT-tau)])
+    lossdiff=lossdiff1[(tau+1):TT]                                    #loss diferential
+    t=TT-tau
+  }      
+  
+  # create the regressor matrix given by lossdiff*ht', where ht is the matrix of instruments
+  reg = -999*matrix(1,nrow=nrow(instruments),ncol=ncol(instruments))
+  
+  for(jj in 1:ncol(instruments)){
+    reg[,jj] = instruments[,jj]*lossdiff
+  }
+  
+  if (tau == 1){
+    # calculate the test stat as nR^2 from the regression of one on lossdiff*ht
+    res_beta = MASS::ginv(reg)%*%matrix(1,t,1)
+    err = matrix(1,t,1)-reg%*%res_beta
+    r2 = 1-mean(err^2)
+    teststat = t*r2
+    q = dim(reg)[2]
+    critval = chi2inv(1-alpha,q)
+    pval = 1 - pchisq(abs(teststat),q)
+  }else{
+    zbar = (colMeans(reg))
+    nlags = tau-1
+    omega = NeweyWest(reg,nlags)
+    teststat = t*t(zbar)%*%solve(omega)%*%t(t(zbar))
+    q = dim(reg)[2]
+    critval = chi2inv(1-alpha,q)
+    pval = 1 - pchisq(abs(teststat),q)
+  }
+  
+  av_diff_loss=mean(loss1-loss2)
+  
+  if (av_diff_loss<0){
+    sign='(-)'
+  } else if (av_diff_loss>0){
+    sign='(+)'
+  }
+  
+  if (choice==1){   
+    print('Choice: Unconditional Test' ) 
+  } else {
+    print('Choice: Conditional Test' ) 
+  }
+  print( sprintf('Forecast Horizon: %s' , tau )) 
+  print( sprintf('Nominal Risk level: %s' , alpha) ) 
+  print('-----------------------------------------------') 
+  print(paste(sprintf('Test-statistic: %s' , teststat), sign) ) 
+  print( sprintf('Critical Value: %s' , critval ) ) 
+  print( sprintf('P-value: %s' , pval ) ) 
+  
+  list(tau=tau,alpha=alpha,teststat=teststat,critval=critval,pval=pval,sign=sign)
+  
+}
+
+#Analisa previsões um passo a frente
+for(m in 1:length(assets)){
+  test<-(forecasts_1[[m]])
+  
+  col_har<-which(colnames(test)=="HAR")
+  test<-test[,c(col_har,rep(1:ncol(test))[-col_har])]
+  
+  #colnames(test)[12]<-"Comb_QLIKE_Pos"
+  forecasts_mse<-test[,!grepl(c("QLIKE"), colnames(test))]
+  forecasts_qlike<-test[,!grepl(c("MSE"), colnames(test))]
+  
+  colnames(forecasts_mse)<-c(models,"Realized")
+  colnames(forecasts_qlike)<-c(models,"Realized")
+  
+  MSE_Errors<-forecasts_mse
+  QLIKE_Errors<-forecasts_qlike
+  
+  
+  col_real<-which(colnames(forecasts_mse)=="Realized")
+  
+  
+  for(j in 1:length(models)){
+    #Métrica avaliando a variância
+    MSE_Errors[,j]<-(forecasts_mse[,col_real]-forecasts_mse[,j])^2
+  }
+  
+  
+  
+  for(j in 1:length(models)){
+    #Métrica com minimo no 1 avaliando o desvio padrão
+    QLIKE_Errors[,j]<-(forecasts_qlike[,col_real]/forecasts_qlike[,j])-log((forecasts_qlike[,col_real]/forecasts_qlike[,j]))-1
+  }
+  
+  
+  NW_MSE<-rep(NA,nrow(MSE_1))
+  
+  SIGN_MSE<-rep(NA,nrow(MSE_1))
+  
+  col_har<-which(colnames(test)=="HAR")
+  
+  for(i in 1:length(models)){
+    if(i!=col_har){
+      NW_MSE[i]<-CPAtest(MSE_Errors[,col_har],MSE_Errors[,i],tau=1, 0.1, choice=2)$pval
+      
+      SIGN_MSE[i]<-CPAtest(MSE_Errors[,col_har],MSE_Errors[,i],tau=1, 0.1, choice=2)$sign
+     
+    }else{
+      NW_MSE[i]<-1
+    }
+  }
+  
+  NW_QLIKE<-rep(NA,nrow(QLIKE_1))
+  
+  SIGN_QLIKE<-rep(NA,nrow(QLIKE_1))
+  
+  for(i in 1:length(models)){
+    if(i!=col_har){
+      NW_QLIKE[i]<-CPAtest(QLIKE_Errors[,col_har],QLIKE_Errors[,i],tau=1, 0.10, choice=2)$pval
+      SIGN_QLIKE[i]<-CPAtest(QLIKE_Errors[,col_har],QLIKE_Errors[,i],tau=1, 0.10, choice=2)$sign
+     
+    }  else{
+      NW_QLIKE[i]<-1
+    }
+  }
+  
+  
+
+  SIGN_MSE[1]<-""
+  
+  SIGN_MSE[NW_MSE>0.10]<-""
+  SIGN_QLIKE[NW_QLIKE>0.10]<-""
+  
+  SIGN_MSE[1]<-""
+  SIGN_QLIKE[1]<-""
+  
+  MSE_1[,m]<-(paste(round(colMeans(MSE_Errors)[-ncol(MSE_Errors)]*1e+08,4),SIGN_MSE,sep=""))
+  QLIKE_1[,m]<-(paste(round(colMeans(QLIKE_Errors)[-ncol(QLIKE_Errors)]*1e+02,4),SIGN_QLIKE,sep=""))
+
+  ####PARTE MCS
+  MCSMSE<-MCSprocedure(MSE_Errors[,-ncol(MSE_Errors)],alpha = 0.25)
+  MCS_MSE_1[,m]<-row.names(MCS_MSE_1)%in%row.names(MCSMSE@show)
+  
+  MCSQLIKE<-MCSprocedure(QLIKE_Errors[,-ncol(QLIKE_Errors)],alpha = 0.25)
+  MCS_QLIKE_1[,m]<-row.names(MCS_QLIKE_1)%in%row.names(MCSQLIKE@show)
+}
+
+#Analisa previsões um passo a frente
+for(m in 1:length(assets)){
+  test<-(forecasts_5[[m]])
+  
+  col_har<-which(colnames(test)=="HAR")
+  test<-test[,c(col_har,rep(1:ncol(test))[-col_har])]
+  
+  #colnames(test)[12]<-"Comb_QLIKE_Pos"
+  forecasts_mse<-test[,!grepl(c("QLIKE"), colnames(test))]
+  forecasts_qlike<-test[,!grepl(c("MSE"), colnames(test))]
+  
+  colnames(forecasts_mse)<-c(models,"Realized")
+  colnames(forecasts_qlike)<-c(models,"Realized")
+  
+  MSE_Errors<-forecasts_mse
+  QLIKE_Errors<-forecasts_qlike
+  
+  
+  col_real<-which(colnames(forecasts_mse)=="Realized")
+  
+  
+  for(j in 1:length(models)){
+    #Métrica avaliando a variância
+    MSE_Errors[,j]<-((forecasts_mse[,col_real]-forecasts_mse[,j])^2)*1e+08
+  }
+  
+  
+  
+  for(j in 1:length(models)){
+    #Métrica com minimo no 1 avaliando o desvio padrão
+    QLIKE_Errors[,j]<-((forecasts_qlike[,col_real]/forecasts_qlike[,j])-log((forecasts_qlike[,col_real]/forecasts_qlike[,j]))-1)*1e+02
+  }
+  
+  
+  NW_MSE<-rep(NA,nrow(MSE_5))
+  
+  SIGN_MSE<-rep(NA,nrow(MSE_5))
+  
+  col_har<-which(colnames(test)=="HAR")
+  
+  for(i in 1:length(models)){
+    if(i!=col_har){
+      NW_MSE[i]<-CPAtest(loss1=MSE_Errors[,col_har],loss2=MSE_Errors[,i],tau=5, alpha=0.1, choice=2)$pval
+      
+      SIGN_MSE[i]<-CPAtest(MSE_Errors[,col_har],MSE_Errors[,i],tau=5, 0.1, choice=2)$sign
+      
+    }else{
+      NW_MSE[i]<-1
+    }
+  }
+  
+  NW_QLIKE<-rep(NA,nrow(QLIKE_1))
+  
+  SIGN_QLIKE<-rep(NA,nrow(QLIKE_1))
+  
+  for(i in 1:length(models)){
+    if(i!=col_har){
+      NW_QLIKE[i]<-CPAtest(QLIKE_Errors[,col_har],QLIKE_Errors[,i],tau=1, 0.10, choice=2)$pval
+      SIGN_QLIKE[i]<-CPAtest(QLIKE_Errors[,col_har],QLIKE_Errors[,i],tau=1, 0.10, choice=2)$sign
+      
+    }  else{
+      NW_QLIKE[i]<-1
+    }
+  }
+  
+  SIGN_MSE[1]<-""
+  
+  SIGN_MSE[NW_MSE>0.10]<-""
+  SIGN_QLIKE[NW_QLIKE>0.10]<-""
+  
+  SIGN_MSE[1]<-""
+  SIGN_QLIKE[1]<-""
+  
+  MSE_5[,m]<-(paste(round(colMeans(MSE_Errors)[-ncol(MSE_Errors)],3),SIGN_MSE,sep=""))
+  QLIKE_5[,m]<-(paste(round(colMeans(QLIKE_Errors)[-ncol(QLIKE_Errors)],3),SIGN_QLIKE,sep=""))
+
+  ####PARTE MCS
+  MCSMSE<-MCSprocedure(MSE_Errors[,-ncol(MSE_Errors)],alpha = 0.25)
+  MCS_MSE_5[,m]<-row.names(MCS_MSE_5)%in%row.names(MCSMSE@show)
+  
+  MCSQLIKE<-MCSprocedure(QLIKE_Errors[,-ncol(QLIKE_Errors)],alpha = 0.25)
+  MCS_QLIKE_5[,m]<-row.names(MCS_QLIKE_5)%in%row.names(MCSQLIKE@show)
+}
+
+
+#Gráficos
+test<-(forecasts_1[[4]])
+dates<-read.csv("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//Dates.csv")
+MFST<-xts(as.ts(test[,c(3,5,13)]),order.by=as.Date(dates[,2]))
+autoplot(MFST)
+MFST<-as.ts(MFST)
+autoplot(MFST)
+
+test<-(forecasts_1[[3]])
+dates<-read.csv("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//Dates.csv")
+GS<-xts(as.ts(test[,c(2,3,6,8,10,13)]),order.by=as.Date(dates[,2]))
+autoplot(GS)
+GS<-as.ts(GS)
+autoplot(GS)
+
+test<-(forecasts_5[[7]])
+dates<-read.csv("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//Dates.csv")
+MFST<-xts(as.ts(test[,c(3,5,11,13)]),order.by=as.Date(dates[-1,2]))
+autoplot(MFST)
+MFST<-as.ts(MFST)
+autoplot(MFST)
+
+test<-(forecasts_1[[3]])
+dates<-read.csv("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//Dates.csv")
+GS<-xts(as.ts(test[,c(2,3,6,8,10,13)]),order.by=as.Date(dates[,2]))
+autoplot(GS)
+GS<-as.ts(GS)
+autoplot(GS)
+
+
+
+
+
+head(forecasts_1[[1]])
+
+autoplot(as.ts(forecasts_1[[5]][,c(7,13)]))
+autoplot(as.ts(forecasts_1[[5]][,c(9,13)]))
