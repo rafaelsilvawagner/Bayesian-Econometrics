@@ -1,0 +1,161 @@
+########################################################################################################################################
+############################################################LOAD PACKAGES###############################################################
+########################################################################################################################################
+
+require(xts)
+require(data.table)
+require(highfrequency)
+library(caret)
+require(forecast)
+require(RWeka)
+require(randomGLM)
+require(Cubist)
+require(colf)
+require(xgboost)
+require(MCS)
+require(glmnet)
+require(MASS)
+require(Rsolnp)
+require(foreach)
+require(doParallel)
+require(mvtnorm)
+require(beepR)
+require(glmc)
+require(doParallel)
+
+
+
+########################################################################################################################################
+############################################################PREPARE THE DATA############################################################
+########################################################################################################################################
+
+#Asset tickers
+assets<-c("AAPL","EBAY","GS","MSFT","PG","ABT","BAC","CVX","GE","CAT")
+
+#Let's make the first asset RV
+data <- read.table(sprintf("C://Users//rwagn//Documents//Mestrado//historic_data//%s.txt",assets[1]), header = TRUE, sep = ',', dec = '.')
+date<- as.POSIXct(paste(data$Date, data$Time), format="%m/%d/%Y %H:%M")
+xts <- xts(data[,-1], order.by=date)
+realizedVar<-rCov(xts$Close,cor = FALSE, align.by = 'minutes', #YOU'LL ANALIXE 5 MIN REALIZED VARIANCE
+                  align.period = 5,   makeReturns = TRUE)
+index(realizedVar)<-as.Date(index(realizedVar))#like all xts objects make a index
+
+
+
+
+#take a look in your frame
+#View(realizedVar)
+
+#Make the same procedure for all the assets defined in the assets frame
+for(asset in assets[-1]){
+  data <- read.table(sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//%s.txt",asset), header = TRUE, sep = ',', dec = '.')
+  date<- as.POSIXct(paste(data$Date, data$Time), format="%m/%d/%Y %H:%M")
+  xts <- xts(data[,-1], order.by=date)
+  realized<-rCov(xts$Close,cor = FALSE, align.by = 'minutes', 
+                 align.period = 5,   makeReturns = TRUE)
+  index(realized)<-as.Date(index(realized))
+  
+  realizedVar<-merge.xts(realizedVar,realized, join='inner')
+}
+
+colnames(realizedVar)<-assets
+
+#Pay attention, we will analyze the log of realizedVar
+realizedVar<-log((realizedVar))
+forecasts_1step<-list()
+forecasts_5step<-list()
+
+
+for(i in 1:nrow(simu_prior)){
+  simu_prior[i,]<-rmvnorm(1,B0,diag(V0))
+}
+
+boxplot(simu_prior)
+
+V0<-diag(V0)
+s0<-1/2
+v0<-4
+
+########################################################################################################################################
+#############################################################FREQUENTIST STUFF##########################################################
+########################################################################################################################################
+
+#You'll do everything for all assets
+#for(asset in 1:length(assets)){
+for(asset in 1:10){
+  
+  #catch the realized Var for the asset
+  Var<-realizedVar[,asset]
+  reg<-cbind(Var,matrix(NA,nrow=nrow(Var),ncol=22))
+  #create Mean Lags
+  for(j in 2:23){
+    for(m in j:nrow(reg)){
+      reg[m,j]<-mean(Var[(m-1):(m-j+1)])
+    }
+  }
+  
+  reg<-reg[23:nrow(reg),]
+  reg_1<-reg
+  reg_5<-cbind(lag(reg[,1],-4),reg[1:(nrow(reg)-4),-1])
+  
+  #give lags names
+  colnames(reg_1)<-c('Close',paste("Close.",1:22,sep=""))
+  colnames(reg_5)<-c('Close',paste("Close.",6:27,sep=""))
+  reg_5<-reg_5[1:(nrow(reg_5)-4),]
+  index(reg_5)<-index(reg_1)[5:nrow(reg_1)]
+  
+  #Create matrix to store the results
+  models<-3
+  comb<-0
+  
+  initial_sample_5<-round(0.8*nrow(reg_5))
+  total_forecasts_5<-nrow(reg_5)-initial_sample_5
+  
+  predicted_5step<-matrix(NA,nrow=total_forecasts_5,ncol=(models+comb+1))
+  predicted_5step<-xts(x=predicted_5step,order.by=index(reg_5)[(initial_sample_5+1):(nrow(reg_5))])
+  
+
+  for(ri in initial_sample_5:(nrow(reg_5)-1)){
+    
+    ################################################################################################################################
+    #################################################PREVISÕES 5 PASSO##############################################################
+    ################################################################################################################################
+    
+    #In the first day store the realized
+    if(ri==initial_sample_5){
+      predicted_5step[,ncol(predicted_5step)]<-exp(reg_5[(initial_sample_5+1):(nrow(reg_5)),1])
+    }
+    
+    #Select the data to train
+    yx<-(reg_5[(ri+1-initial_sample_5):ri, ])
+    #Separate the regressors
+    x<-(reg_5[(ri+1-initial_sample_5):ri,-1])
+    #Separate the response
+    y<-(reg_5[(ri+1-initial_sample_5):ri, 1])
+    
+   
+    #Fits the HAR Model
+    ls_3<-lm(Close~Close.6+Close.10+Close.27, 
+           data = yx)
+    ls_2<-lm(Close~Close.6+Close.27, 
+             data = yx)
+    ls_1<-lm(Close~Close.6+Close.22, 
+             data = yx)
+    
+    #Fits Cubist Model
+    
+    
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1] = exp(predict(ls_3, (reg_5[(ri+1),])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),2] = exp(predict(ls_2, (reg_5[(ri+1),])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),3] = exp(predict(ls_1, (reg_5[(ri+1),])))
+
+  }
+  
+  
+  write.csv(index(predicted_5step),"C://Users//rwagn//Documents//Mestrado//historic_data//Dates_5.csv")
+  
+  write.csv(predicted_5step,sprintf("C://Users//rwagn//Documents//Mestrado//historic_data//predicted_5step_%s.csv",asset))
+}
+
+
+
