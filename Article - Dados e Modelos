@@ -2,6 +2,7 @@
 ############################################################LOAD PACKAGES###############################################################
 ########################################################################################################################################
 
+require(rnn)
 require(xts)
 require(data.table)
 require(highfrequency)
@@ -14,12 +15,13 @@ require(colf)
 require(xgboost)
 require(MCS)
 require(glmnet)
+require(timeSeries)
 require(MASS)
 require(Rsolnp)
 require(foreach)
 require(doParallel)
 require(mvtnorm)
-require(beepR)
+require(rnn)
 require(glmc)
 require(doParallel)
 
@@ -65,34 +67,6 @@ realizedVar<-log((realizedVar))
 forecasts_1step<-list()
 forecasts_5step<-list()
 
-#take a look in your frame
-#View(realizedVar)
-
-
-########################################################################################################################################
-#############################################################BAYESIAN STUFF#############################################################
-########################################################################################################################################
-
-#Makes prior for 22 lags plus an intercept
-B0<-rep(0,23)
-#lets say that the HAR defs has expectation of be 0.3
-B0[c(2,6,23)]<-0.3
-#lets say that the HAR coefficient has expectation of be 0.01
-B0[c(1)]<-0.01
-V0<-c(0.2,0.2,(sin(seq(pi,2*pi,pi/4))[-c(1,5)]+1.1)*0.0001,0.2,
-      (sin(seq(pi,2*pi,pi/17))[-c(1,18)]+1.1)*0.0001,0.2)
-
-simu_prior<-matrix(nrow=10000,ncol=23)
-
-for(i in 1:nrow(simu_prior)){
-  simu_prior[i,]<-rmvnorm(1,B0,diag(V0))
-}
-
-boxplot(simu_prior)
-
-V0<-diag(V0)
-s0<-1/2
-v0<-4
 
 ########################################################################################################################################
 #############################################################FREQUENTIST STUFF##########################################################
@@ -100,7 +74,7 @@ v0<-4
 
 #You'll do everything for all assets
 #for(asset in 1:length(assets)){
-for(asset in 9:10){
+for(asset in 7:10){
   
   #catch the realized Var for the asset
   Var<-realizedVar[,asset]
@@ -115,7 +89,7 @@ for(asset in 9:10){
   
   reg<-reg[23:nrow(reg),]
   reg_1<-reg
-  reg_5<-cbind(lag(reg[,1],-4),reg[1:(nrow(reg)-4),-1])
+  reg_5<-cbind(timeSeries::lag(reg[,1],-4),reg[1:(nrow(reg)-4),-1])
   
   #give lags names
   colnames(reg_1)<-c('Close',paste("Close.",1:22,sep=""))
@@ -124,7 +98,7 @@ for(asset in 9:10){
   index(reg_5)<-index(reg_1)[5:nrow(reg_1)]
   
   #Create matrix to store the results
-  models<-6
+  models<-10
   comb<-6
   
   initial_sample_1<-round(0.8*nrow(reg_1))
@@ -140,19 +114,25 @@ for(asset in 9:10){
   predicted_5step<-xts(x=predicted_5step,order.by=index(reg_5)[(initial_sample_5+1):(nrow(reg_5))])
   
   
-  colnames(predicted_1step)<-c("Tree","Bagging","HAR","Cubist","Lasso","Bayes","Comb_MSE_Pos","Comb_QLIKE_Pos",
+  colnames(predicted_1step)<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp","RNN","LSTM",
+                               "GRU","Comb_MSE_Pos","Comb_QLIKE_Pos",
                                "Comb_MSE_Pos_1","Comb_QLIKE_Pos_1","DMA_MSE","DMA_QLIKE","Realized")
   
-  colnames(predicted_5step)<-c("Tree","Bagging","HAR","Cubist","Lasso","Bayes","Comb_MSE_Pos","Comb_QLIKE_Pos",
-                               "Comb_MSE_Pos_1","Comb_QLIKE_Pos_1","DMA_MSE","DMA_QLIKE","Realized")
+  colnames(predicted_5step)<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp","RNN","LSTM",
+                               "GRU","Comb_MSE_Pos","Comb_QLIKE_Pos","Comb_MSE_Pos_1",
+                               "Comb_QLIKE_Pos_1","DMA_MSE","DMA_QLIKE","Realized")
+  
+  
+  ######Weights
+  weights_1step<-matrix(NA,nrow=total_forecasts_1,ncol=52)
+  weights_5step<-matrix(NA,nrow=total_forecasts_1,ncol=52)
   
   
   #Start the dinamic moving average weights
-  dma_weigths_MSE<-rep(1/(models),models)
-  dma_weigths_QLIKE<-rep(1/(models),models)
+  dma_weigths_MSE<-rep(1/(10),10)
+  dma_weigths_QLIKE<-rep(1/(10),10)
   forget_rate=0.95
   
-  #Predict for all the days
   for(ri in initial_sample_1:(nrow(reg_1)-1)){
     
     ################################################################################################################################
@@ -171,195 +151,281 @@ for(asset in 9:10){
     #Separate the response
     y<-(reg_1[(ri+1-initial_sample_1):ri, 1])
     
-    #Fit M5 model with pruned trees and smoothe predictions
-    M5_model = RWeka::M5P(Close ~ ., data = yx,control=Weka_control(N=F,U=F,R=F))
+    ######################
+    ####Linear Frequentist
+    ######################
     
-    
-    #Make bagging fitting M5 models as base learners
-    M5_bag = Bagging(Close ~ ., data = yx, 
-                     control = Weka_control(P=100,I=200,W = list("weka.classifiers.trees.M5P", N=F,U=T,R=F,M=10)) )
-    
-    #cv_test<-matrix(nrow=500,ncol=500)
-    #cv<-2/3
-    #for(l in seq(10,100,10)){
-    #  print(l)
-    #  for(c in seq(50,500,50)){
-    #    print(paste(l,c))
-    #    test<-base::sample(1:nrow(y),1/3*nrow(y))
-    #    train<-which(!(1:length(y)%in%test))
-    #    y_train<-y[train,]
-    #    x_train<-x[train,]
-          
-    #      y_test<-y[which(1:length(y)%in%test),]
-    #      
-    #      x_test<-x[which(1:length(y)%in%test),]
-          
-    #      M5_bag = Bagging(Close ~ ., data = yx, 
-    #                       control = Weka_control(P=l,I=c,W = list("weka.classifiers.trees.M5P", N=F,U=T,R=F,M=10)) )
-    #    cv_test[l,c]<-mean((predict(M5_bag,x_test)-y_test)^2)
-    #    cv_test[l,c]<-sqrt(var((predict(M5_bag,x_test)-y_test)^2))
-    #    }
-     #}
-    
-    #n_min<-which.min(cv_test[,1])
-    #cv_test[,1]<cv_test[200,1]+cv_test[n_min,2]
-    #cv_test[seq(10,100,10),seq(50,500,50)]<0.4638382
-    #cv_test[400,250]
-    ##400 250 .4638382
-    #require(rgl)
-    #  open renderer
-    #open3d()
-    #  plot surface
-    #rgl.surface(seq(10,200,10), seq(5,100,5),   cv_test[seq(5,100,5),seq(10,200,10)]*10000)
-    #  Export to png
-    #rgl.snapshot( "sample.png" , fmt="png", top=TRUE )
-    #require(plot3D)
-    
-    #persp3D(z = cv_test[seq(50,500,50),seq(50,500,50)], theta = 120)
-    #To see M5P options please look at
-    #WOW(M5P)
-    
-    #Fits the HAR Model
-    ls<-lm(Close~Close.1+Close.5+Close.22, 
-           data = yx)
-    
-    #Fits Cubist Model
-    cube<-cubist(x=as.matrix(x),y=as.matrix(y),committees=5, neighbors=5)
-   
-    #cv_test<-matrix(nrow=100,ncol=1)
-    #cv<-2/3
-    ##for(l in seq(5,100,5)){
-    #  print(l)
-    #  for(c in 5){
-    #      test<-base::sample(1:nrow(y),1/3*nrow(y))
-    #      train<-which(!(1:length(y)%in%test))
-    #      y_train<-y[train,]
-    #      x_train<-x[train,]
-    #      
-    #      y_test<-y[which(1:length(y)%in%test),]
-    #      x_test<-x[which(1:length(y)%in%test),]
-    #      
-    ##      cube<-cubist(x=as.matrix(x_train),y=as.matrix(y_train),committees=l, neighbors=c)
-    #      cv_test[l,1]<-mean((predict(cube,x_test)-y_test)^2)
-    #      cv_test[l,1]<-sqrt(var((predict(cube,x_test)-y_test)^2))
-    #    }
-    #}
-    
-    #plot(cv_test[seq(5,100,5),1])
-    #n_min<-which.min(cv_test[,1])
-    #cv_test[,1]<cv_test[200,1]+cv_test[n_min,2]
-    #cv_test[seq(5,100,5),seq(5,200,5)]
-    
-    #require(rgl)
-    ##  open renderer
-    #open3d()
-    #  plot surface
-    #rgl.surface(seq(10,200,10), seq(5,100,5),   cv_test[seq(5,100,5),seq(10,200,10)]*10000)
-    #  Export to png
-    #rgl.snapshot( "sample.png" , fmt="png", top=TRUE )
-    #require(plot3D)
-    
-    #persp3D(z = cv_test[seq(5,100,5),seq(10,200,10)], theta = 120)
-    
-    ## Ridge Regression to create the Adaptive Weights Vector
-    #cv.ridge <- cv.glmnet(as.matrix(x), as.matrix(y),parallel=TRUE, alpha=0, standardize=TRUE)
-    #w3 <- 1/abs(matrix(coef(cv.ridge, s=cv.ridge$lambda.min)
-    #                   [, 1][2:(ncol(x)+1)] ))^1 ## Using gamma = 1
-    #w3[w3[,1] == Inf] <- 999999999 ## Replacing values estimated as Infinite for 999999999
-    
-    ## Adaptive Lasso
-    #cv.out <- cv.glmnet(as.matrix(x), as.matrix(y), alpha=1, parallel=TRUE, standardize=TRUE, penalty.factor=w3)
+    #HAR
+    ls<-lm(Close~Close.1+Close.5+Close.22,data = yx)
+    #Lasso
     cv.out <- cv.glmnet(x=as.matrix(x), y=as.matrix(y), alpha=1)
+    lasso.mod <- glmnet(x=as.matrix(x), y=as.matrix(y), lambda=cv.out$lambda.1se,alpha=1)
     
-    #Fits Lasso regression model
-    lasso.mod <- glmnet(x=as.matrix(x), y=as.matrix(y), lambda=cv.out$lambda.1se,
-                        alpha=1)
+    ######################
+    ####Tree Based Methods
+    ######################
     
-    #Make the bayesian estimation
-    x_bayes<-cbind(1,x)
-    bols<-solve(t(x_bayes)%*%x_bayes)%*%t(x_bayes)%*%y
+    #M5P
+    M5_model = RWeka::M5P(Close ~ ., data = yx,control=Weka_control(N=F,U=F,R=F))
+    #BAGGING
+    M5_bag = Bagging(Close ~ ., data = yx,control = Weka_control(P=100,I=200,W=list("weka.classifiers.trees.M5P", N=F,U=T,R=F,M=10)))
+    #CUBIST
+    cube<-cubist(x=as.matrix(x),y=as.matrix(y),committees=5, neighbors=5)
     
-    V1<-solve(solve(V0)+t(x_bayes)%*%x_bayes)
-    B1<-V1%*%(solve(V0)%*%B0+t(x_bayes)%*%x_bayes%*%bols)
+    ######################
+    ####Neural Networks 
+    ######################
+    m_x<-colMeans(x)
+    sd_x<-colSds(x)
     
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1] = exp(predict(M5_model, (reg_1[(ri+1),])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),2] = exp(predict(M5_bag, (reg_1[(ri+1),])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),3] = exp(predict(ls, (reg_1[(ri+1),])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),4] = exp(predict(cube, as.matrix((reg_1[(ri+1),-1]))))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),5] = exp(predict(lasso.mod, as.matrix((reg_1[(ri+1),-1]))))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),6] = exp((c(1,matrix(reg_1[(ri+1),-1]))%*%B1))
+    x_nn<-(x-t(replicate(nrow(x), m_x)))/t(replicate(nrow(x), sd_x))
+    x_nn<-array(x_nn,dim = c(nrow(x),1,ncol(x)))
+    y_nn <- (y - mean(y)) / sd(y)
+    m_y<-mean(y)
+    sd_y<-sd(y)
     
-    
-    in_sample<-as.matrix((reg_1[(ri-round(0.8*nrow(reg_1))+1):ri,1]))*0
-    in_sample<-cbind(in_sample,in_sample,in_sample,in_sample,in_sample,in_sample,in_sample)
-    colnames(in_sample)<-c("M5P","Bagging","HAR","Cubist","Lasso","Bayesian","Realized")
-    
-    in_sample[,1]<-exp((predict(M5_model, (reg_1[(ri+1-initial_sample_1):ri,]))))
-    in_sample[,2]<-exp((predict(M5_bag, (reg_1[(ri+1-initial_sample_1):ri,]))))
-    in_sample[,3]<-exp((predict(ls, (reg_1[(ri+1-initial_sample_1):ri,]))))
-    in_sample[,4]<-exp((predict(cube, (reg_1[(ri+1-initial_sample_1):ri,]))))
-    in_sample[,5]<-exp((predict(lasso.mod, as.matrix((reg_1[(ri+1-initial_sample_1):ri,-1])))))
-    in_sample[,6]<-exp(((as.matrix(cbind(1,reg_1[(ri+1-initial_sample_1):ri,-1])))%*%B1))
-    in_sample[,7]<-exp(y) 
-    
-    
-    
-    #QLIKE
-    QLIKE <- function(x) {
-      reta<-x[1]+ in_sample[,1]*x[2] +in_sample[,2]*x[3] +in_sample[,3]*x[4] +
-        in_sample[,4]*x[5] +in_sample[,5]*x[6]+in_sample[,6]*x[7]
-      
-      sum(in_sample[,7]/reta-log(in_sample[,7]/reta)-1)
+    if(ri==initial_sample_1){
+      #RNN
+      RNN<-trainr(Y=y_nn, X=x_nn, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 1)
+      #LSTM
+      LSTM<-trainr(Y=y_nn, X=x_nn, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 1)
+      #GRU
+      GRU<-trainr(Y=y_nn, X=x_nn, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 1)
+      for(h in 1:50){
+        #RNN
+        RNN<-trainr(Y=y_nn, X=x_nn,model=RNN, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 1)
+        #LSTM
+        LSTM<-trainr(Y=y_nn, X=x_nn,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 1)
+        #GRU
+        GRU<-trainr(Y=y_nn, X=x_nn,model=GRU, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 1)
+      }
+    }else{
+      #RNN
+      RNN<-trainr(Y=y_nn, X=x_nn,model=RNN, network_type = "rnn", use_bias = T,learningrate=.01,numepochs = 1)
+      #LSTM
+      LSTM<-trainr(Y=y_nn, X=x_nn,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.01,numepochs = 1)
+      #GRU
+      GRU<-trainr(Y=y_nn, X=x_nn,model=GRU, network_type = "gru", use_bias = T,learningrate=.01,numepochs = 1)
     }
     
     
     
+    
+    
+    
+    ##################################################################################################################
+    ##################################################################################################################
+    ##################################################################################################################
+    ##################################################################################################################
+    
+    #CÓDIGOS BEYSIANOS
+    
+    ##################################################################################################################
+    ##################################################################################################################
+    ##################################################################################################################
+    ##################################################################################################################
+    
+    ######################
+    ####Prior Sin
+    ######################
+    if(ri==initial_sample_1){
+      strong1<-seq(2,10,2)
+      strong2<-seq(2,10,2)
+      strong3<-1/seq(2,10,2)
+      strong4<-1/seq(2,10,2)
+      gridvar24<-c(seq(0,1,1/3)[3],seq(0,1,1/3)[2:3])
+      gridvar622<-c(seq(0,1,1/10)[9:2],seq(0,1,1/10)[2:9])
+      loopgrid<-expand.grid(strong1,strong2,strong3,strong4)
+      loopgrid<-cbind(loopgrid,0)
+      colnames(loopgrid)<-c("strong1","strong2","strong3","strong4","MSE")
+      B0<-rep(0,23)
+      B0[c(2,6,23)]<-0.3
+      B0[c(1)]<-0.01
+      
+      for(bayhat in 1:nrow(loopgrid)){
+        #Training Data
+        train<-sample(nrow(yx), 0.8*nrow(yx))
+        yx_train<-yx[train,]
+        x_train<-yx_train[,-1]
+        y_train<-yx_train[,1]
+        yx_test<-yx[-train,]
+        x_test<-yx_test[,-1]
+        y_test<-yx_test[,1]
+        
+        V0<-diag(c(0.2,0.2,(gridvar24^loopgrid[bayhat,1])*loopgrid[bayhat,3],0.2,(gridvar622^loopgrid[bayhat,2])*loopgrid[bayhat,4],0.2))
+        x_bayes<-cbind(1,x_train)
+        bols<-solve(t(x_bayes)%*%x_bayes)%*%t(x_bayes)%*%y_train
+        V1<-solve(solve(V0)+t(x_bayes)%*%x_bayes)
+        B1<-V1%*%(solve(V0)%*%B0+t(x_bayes)%*%x_bayes%*%bols)
+        
+        loopforecast<-cbind(1,x_test)%*%B1
+        error_mse<-sum(MCS::LossVol(evaluated=loopforecast,realized=y_test,which='SE1'))
+        error_qlike<-sum(MCS::LossVol(evaluated=loopforecast,realized=y_test,which='QLIKE'))
+        loopgrid[bayhat,5]<-error_mse
+      }
+      
+      optsin_mse<-which.min(loopgrid[,5])
+      V0_sin<-diag(c(0.2,0.2,(gridvar24^loopgrid[bayhat,1])*loopgrid[bayhat,3],0.2,(gridvar622^loopgrid[bayhat,2])*loopgrid[bayhat,4],0.2))
+      write.csv(loopgrid,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//treated_variables//Artigo André//otimobayes//1step sin %s.csv",asset))
+    }
+    
+ 
+    #Make the bayesian estimation
+    B0<-rep(0,23)
+    B0[c(2,6,23)]<-0.3
+    B0[c(1)]<-0.01
+    x_bayes<-cbind(1,x)
+    bols<-solve(t(x_bayes)%*%x_bayes)%*%t(x_bayes)%*%y
+    V1<-solve(solve(V0_sin)+t(x_bayes)%*%x_bayes)
+    B1_SIN<-V1%*%(solve(V0_sin)%*%B0+t(x_bayes)%*%x_bayes%*%bols)
+
+    
+    
+    ######################
+    ####Prior Exp
+    ######################
+    
+    if(ri==initial_sample_1){
+      B0<-rep(0,23)
+      par1<-10^seq(0,0.5,0.005)
+      par2<-1/(1:10)
+      Var<-1:22
+      loopgrid<-cbind(expand.grid(par1,par2),NA)
+      colnames(loopgrid)<-c("par1","par2","MSE")
+      
+      for(bayhat in 1:nrow(loopgrid)){
+        #Training Data
+        train<-sample(nrow(yx), 0.8*nrow(yx))
+        yx_train<-yx[train,]
+        x_train<-yx_train[,-1]
+        y_train<-yx_train[,1]
+        yx_test<-yx[-train,]
+        x_test<-yx_test[,-1]
+        y_test<-yx_test[,1]
+        
+
+        V0<-diag(c(1,(seq(loopgrid[bayhat,2],0,-loopgrid[bayhat,2]/22)[1:22])^loopgrid[bayhat,1]))
+        x_bayes<-cbind(1,x_train)
+        bols<-solve(t(x_bayes)%*%x_bayes)%*%t(x_bayes)%*%y_train
+        V1<-solve(solve(V0)+t(x_bayes)%*%x_bayes)
+        B1<-V1%*%(solve(V0)%*%B0+t(x_bayes)%*%x_bayes%*%bols)
+        
+        loopforecast<-cbind(1,x_test)%*%B1
+        error_mse<-sum(MCS::LossVol(evaluated=loopforecast,realized=y_test,which='SE1'))
+        error_qlike<-sum(MCS::LossVol(evaluated=loopforecast,realized=y_test,which='QLIKE'))
+        loopgrid[bayhat,3]<-error_mse
+      }
+      optexp_mse<-which.min(loopgrid[,3])
+      V0_exp<-diag(c(1,(seq(loopgrid[optexp_mse,2],0,-loopgrid[optexp_mse,2]/22)[1:22])^loopgrid[optexp_mse,1]))
+      write.csv(loopgrid,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//treated_variables//Artigo André//otimobayes//1step exp %s.csv",asset))
+    }
+    
+    #Make the bayesian estimation
+    B0<-rep(0,23)
+    x_bayes<-cbind(1,x)
+    bols<-solve(t(x_bayes)%*%x_bayes)%*%t(x_bayes)%*%y
+    V1<-solve(solve(V0_exp)+t(x_bayes)%*%x_bayes)
+    B1_EXP<-V1%*%(solve(V0_exp)%*%B0+t(x_bayes)%*%x_bayes%*%bols)
+    
+    ######################
+    ####Forecasts
+    ######################
+    x_nn_pred<-t((matrix(reg_1[(ri+1),-1])-m_x)/sd_x)
+    x_nn_pred<-array(x_nn_pred,dim = c(nrow(x_nn_pred),1,ncol(x_nn_pred)))
+    y_nn <- (y - mean(y)) / sd(y)
+    m_y<-mean(y)
+    sd_y<-sd(y)
+    
+
+    
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1] = exp(predict(ls, (reg_1[(ri+1),])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),2] = exp(predict(lasso.mod, as.matrix((reg_1[(ri+1),-1]))))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),3] = exp(predict(M5_model, (reg_1[(ri+1),])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),4] = exp(predict(M5_bag, (reg_1[(ri+1),])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),5] = exp(predict(cube, as.matrix((reg_1[(ri+1),-1]))))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),6] = exp((c(1,matrix(reg_1[(ri+1),-1]))%*%B1_SIN))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),7] = exp((c(1,matrix(reg_1[(ri+1),-1]))%*%B1_EXP))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),8] = exp((predictr(RNN,X=x_nn_pred)*sd_y)+m_y)
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),9] = exp((predictr(LSTM,X=x_nn_pred)*sd_y)+m_y)
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),10] = exp((predictr(GRU,X=x_nn_pred)*sd_y)+m_y)
+    
+    
+    
+    in_sample<-as.matrix((reg_1[(ri-round(0.8*nrow(reg_1))+1):ri,1]))*0
+    in_sample<-cbind(in_sample,in_sample,in_sample,in_sample,in_sample,in_sample,in_sample,in_sample)
+    colnames(in_sample)<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp","Realized")
+    
+    x_nnin<-(reg_1[(ri+1-initial_sample_1):ri,-1]-t(replicate(ri-(ri-initial_sample_1), m_x)))/
+      t(replicate(ri-(ri-initial_sample_1), sd_x))
+    x_nnin<-array(x_nnin,dim = c(nrow(x),1,ncol(x)))
+    
+    
+    in_sample[,1]<-exp((predict(ls, (reg_1[(ri+1-initial_sample_1):ri,]))))
+    in_sample[,2]<-exp((predict(lasso.mod, as.matrix((reg_1[(ri+1-initial_sample_1):ri,-1])))))
+    in_sample[,3]<-exp((predict(M5_model, (reg_1[(ri+1-initial_sample_1):ri,]))))
+    in_sample[,4]<-exp((predict(M5_bag, (reg_1[(ri+1-initial_sample_1):ri,]))))
+    in_sample[,5]<-exp((predict(cube, (reg_1[(ri+1-initial_sample_1):ri,]))))
+    in_sample[,6]<-exp(((as.matrix(cbind(1,reg_1[(ri+1-initial_sample_1):ri,-1])))%*%B1_SIN))
+    in_sample[,7]<-exp(((as.matrix(cbind(1,reg_1[(ri+1-initial_sample_1):ri,-1])))%*%B1_EXP))
+    in_sample[,8]<-exp(y) 
+    
+    ######################
+    ####Finds Regression Combinations
+    ######################
+    QLIKE <- function(x) {
+      reta<-x[1]+ in_sample[,1]*x[2] +in_sample[,2]*x[3] +in_sample[,3]*x[4] +
+        in_sample[,4]*x[5] +in_sample[,5]*x[6]+in_sample[,6]*x[7]+in_sample[,7]*x[8]
+      
+      sum(in_sample[,8]/reta-log(in_sample[,8]/reta)-1)
+    }
+    
     MSE <- function(x) {
       reta<-x[1]+ in_sample[,1]*x[2] +in_sample[,2]*x[3] +in_sample[,3]*x[4] +
-        in_sample[,4]*x[5] +in_sample[,5]*x[6]+in_sample[,6]*x[7]
+        in_sample[,4]*x[5] +in_sample[,5]*x[6]+in_sample[,6]*x[7]+in_sample[,7]*x[8]
       
       sum((reta-in_sample[,7])^2)
     }
     
-    
     equal <- function(x) {
-      x[2]+x[3]+x[4]+x[5]+x[6]+x[7]
+      x[2]+x[3]+x[4]+x[5]+x[6]+x[7]+x[8]
     }
     
-    par_MSE_POS<-solnp(pars=c(0,1/6,1/6,1/6,1/6,1/6,1/6), #starting values (random - obviously need to be positive and sum to 15)
+    par_MSE_POS<-solnp(pars=c(0,1/7,1/7,1/7,1/7,1/7,1/7,1/7), #starting values (random - obviously need to be positive and sum to 15)
                        fun=MSE,
-                       LB=c(-10,0,0,0,0,0,0), 
+                       LB=c(-10,0,0,0,0,0,0,0), 
                        control=list(tol=.Machine$double.eps)
     )$pars
     
-    par_QLIKE_POS<-solnp(pars=c(1,1,1,1,1,1,1), #starting values (random - obviously need to be positive and sum to 15)
+    par_QLIKE_POS<-solnp(pars=c(1,1,1,1,1,1,1,1), #starting values (random - obviously need to be positive and sum to 15)
                          fun=QLIKE,
-                         LB=c(-10,0,0,0,0,0,0), #lower bound for parameters i.e. greater than zero
+                         LB=c(-10,0,0,0,0,0,0,0), #lower bound for parameters i.e. greater than zero
                          control=list(tol=.Machine$double.eps)
     )$pars
     
-    par_MSE_POS_1<-solnp(pars=c(0,0.2,0.2,0.2,0.2,0.1,0.1), #starting values (random - obviously need to be positive and sum to 15)
+    par_MSE_POS_1<-solnp(pars=c(0,0.2,0.2,0.2,0.1,0.1,0.1,0.1), #starting values (random - obviously need to be positive and sum to 15)
                          fun=MSE,
-                         LB=c(-1,0,0,0,0,0,0), 
+                         LB=c(-1,0,0,0,0,0,0,0), 
                          eqfun=equal, #equality function 
                          eqB=1,   #the equality constraint
                          control=list(tol=.Machine$double.eps)
     )$pars
     
-    par_QLIKE_POS_1<-solnp(pars=c(0,0.2,0.2,0.2,0.2,0.1,0.1), #starting values (random - obviously need to be positive and sum to 15)
+    par_QLIKE_POS_1<-solnp(pars=c(0,0.2,0.2,0.2,0.1,0.1,0.1,0.1), #starting values (random - obviously need to be positive and sum to 15)
                            fun=QLIKE,
-                           LB=c(-1,0,0,0,0,0,0),
+                           LB=c(-1,0,0,0,0,0,0,0),
                            eqfun=equal, #equality function 
                            eqB=1,   #the equality constraint
                            control=list(tol=.Machine$double.eps)
     )$pars
     
+ 
+  
     if(ri==initial_sample_1){
       dma_weigths_MSE<-dma_weigths_MSE
       dma_weigths_QLIKE<-dma_weigths_QLIKE
     } else{
-      real<-rep((predicted_1step[(ri-round(0.8*nrow(reg))),ncol(predicted_1step)]),models)
-      fore<-(predicted_1step[(ri-round(0.8*nrow(reg))),1:6])
+      real<-rep((predicted_1step[(ri-round(0.8*nrow(reg))),ncol(predicted_1step)]),10)
+      fore<-(predicted_1step[(ri-round(0.8*nrow(reg))),1:10])
       
       erro_MSE<-(fore-real)^2
       #tinha um erro aqui
@@ -375,21 +441,24 @@ for(asset in 9:10){
       dma_weigths_QLIKE = pi_t_k^(forget_rate)/as.numeric(sum2)
     }
     
+    weights_1step[(ri-round(0.8*nrow(reg_1))+1),]<-c(par_MSE_POS,par_QLIKE_POS,par_MSE_POS_1,par_MSE_POS_1,dma_weigths_MSE,dma_weigths_QLIKE)
     
-    
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),7]<-sum(c(par_MSE_POS)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:6])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),8]<-sum(c(par_QLIKE_POS)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:6])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),9]<-sum(c(par_MSE_POS_1)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:6])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),10]<-sum(c(par_QLIKE_POS_1)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:6])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),11]<-(dma_weigths_MSE%*%t((predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:6])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),12]<-(dma_weigths_QLIKE%*%t((predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:6])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),11]<-sum(c(par_MSE_POS)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),12]<-sum(c(par_QLIKE_POS)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),13]<-sum(c(par_MSE_POS_1)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),14]<-sum(c(par_QLIKE_POS_1)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),15]<-(dma_weigths_MSE%*%t((predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:10])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),16]<-(dma_weigths_QLIKE%*%t((predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:10])))
   }
   
+  write.csv(weights_1step,sprinf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//weights1 %s.csv",asset))
+  write.csv(index(predicted_5step),sprinf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//dates1 %s.csv",asset))
+  write.csv(predicted_1step,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//predicted_1step_%s.csv",asset))
   
-  dma_weigths_MSE<-rep(1/(models),models)
-  dma_weigths_QLIKE<-rep(1/(models),models)
+  
+  dma_weigths_MSE<-rep(1/(7),7)
+  dma_weigths_QLIKE<-rep(1/(7),7)
   forget_rate=0.95
-  
   
   for(ri in initial_sample_5:(nrow(reg_5)-1)){
     
@@ -409,150 +478,301 @@ for(asset in 9:10){
     #Separate the response
     y<-(reg_5[(ri+1-initial_sample_5):ri, 1])
     
+    ######################
+    ####Linear Frequentist
+    ######################
     
-    #Fit M5 model with pruned trees and smoothe predictions
-    M5_model = RWeka::M5P(Close ~ ., data = yx,control=Weka_control(N=F,U=F,R=F))
-    
-    #Make bagging fitting M5 models as base learners
-    M5_bag = Bagging(Close ~ ., data = yx, 
-                     control = Weka_control(P=100,I=200,W = list("weka.classifiers.trees.M5P", N=F,U=T,R=F,M=10)) )
-    #To see M5P options please look at
-    #WOW(M5P)
-    
-    #Fits the HAR Model
-    ls<-lm(Close~Close.6+Close.10+Close.27, 
-           data = yx)
-    
-    #Fits Cubist Model
-    cube<-cubist(x=as.matrix(x),y=as.matrix(y),committees=5, neighbors=5)
-   #cubistTuned <- caret::train(x=data.frame(x),y=data.frame(as.numeric(y)), method = "cubist")
-    
-    #LASSO
+    #HAR
+    ls<-lm(Close~Close.1+Close.5+Close.22,data = yx)
+    #Lasso
     cv.out <- cv.glmnet(x=as.matrix(x), y=as.matrix(y), alpha=1)
+    lasso.mod <- glmnet(x=as.matrix(x), y=as.matrix(y), lambda=cv.out$lambda.1se,alpha=1)
     
-    #Fits Lasso regression model
-    lasso.mod <- glmnet(x=as.matrix(x), y=as.matrix(y), lambda=cv.out$lambda.1se,
-                        alpha=1)
+    ######################
+    ####Tree Based Methods
+    ######################
     
+    #M5P
+    M5_model = RWeka::M5P(Close ~ ., data = yx,control=Weka_control(N=F,U=F,R=F))
+    #BAGGING
+    M5_bag = Bagging(Close ~ ., data = yx,control = Weka_control(P=100,I=200,W=list("weka.classifiers.trees.M5P", N=F,U=T,R=F,M=10)))
+    #CUBIST
+    cube<-cubist(x=as.matrix(x),y=as.matrix(y),committees=5, neighbors=5)
     
-    #Make the bayesian estimation
-    x_bayes<-cbind(1,x)
-    bols<-solve(t(x_bayes)%*%x_bayes)%*%t(x_bayes)%*%y
+    ######################
+    ####Neural Networks 
+    ######################
+    m_x<-colMeans(x)
+    sd_x<-colSds(x)
     
-    V1<-solve(solve(V0)+t(x_bayes)%*%x_bayes)
-    B1<-V1%*%(solve(V0)%*%B0+t(x_bayes)%*%x_bayes%*%bols)
+    x_nn<-(x-t(replicate(nrow(x), m_x)))/t(replicate(nrow(x), sd_x))
+    x_nn<-array(x_nn,dim = c(nrow(x),1,ncol(x)))
+    y_nn <- (y - mean(y)) / sd(y)
+    m_y<-mean(y)
+    sd_y<-sd(y)
     
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1] = exp(predict(M5_model, (reg_5[(ri+1),])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),2] = exp(predict(M5_bag, (reg_5[(ri+1),])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),3] = exp(predict(ls, (reg_5[(ri+1),])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),4] = exp(predict(cube, as.matrix((reg_5[(ri+1),-1]))))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),5] = exp(predict(lasso.mod, as.matrix((reg_5[(ri+1),-1]))))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),6] = exp((c(1,matrix(reg_5[(ri+1),-1]))%*%B1))
+    if(ri==initial_sample_5){
+      #RNN
+      RNN<-trainr(Y=y_nn, X=x_nn, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 1)
+      #LSTM
+      LSTM<-trainr(Y=y_nn, X=x_nn, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 1)
+      #GRU
+      GRU<-trainr(Y=y_nn, X=x_nn, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 1)
+      for(h in 1:50){
+        #RNN
+        RNN<-trainr(Y=y_nn, X=x_nn,model=RNN, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 1)
+        #LSTM
+        LSTM<-trainr(Y=y_nn, X=x_nn,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 1)
+        #GRU
+        GRU<-trainr(Y=y_nn, X=x_nn,model=GRU, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 1)
+      }
+    }else{
+      #RNN
+      RNN<-trainr(Y=y_nn, X=x_nn,model=RNN, network_type = "rnn", use_bias = T,learningrate=.01,numepochs = 1)
+      #LSTM
+      LSTM<-trainr(Y=y_nn, X=x_nn,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.01,numepochs = 1)
+      #GRU
+      GRU<-trainr(Y=y_nn, X=x_nn,model=GRU, network_type = "gru", use_bias = T,learningrate=.01,numepochs = 1)
+    }
     
+    ##################################################################################################################
+    ##################################################################################################################
+    ##################################################################################################################
+    ##################################################################################################################
     
-    in_sample<-as.matrix((reg_5[(ri-initial_sample_5+1):ri,1]))*0
-    in_sample<-cbind(in_sample,in_sample,in_sample,in_sample,in_sample,in_sample,in_sample)
-    colnames(in_sample)<-c("M5P","Bagging","HAR","Cubist","Lasso","Bayesian","Realized")
+    #CÓDIGOS BEYSIANOS
     
+    ##################################################################################################################
+    ##################################################################################################################
+    ##################################################################################################################
+    ##################################################################################################################
     
-    in_sample[,1]<-exp((predict(M5_model, (reg_5[(ri+1-initial_sample_5):ri,]))))
-    in_sample[,2]<-exp((predict(M5_bag, (reg_5[(ri+1-initial_sample_5):ri,]))))
-    in_sample[,3]<-exp((predict(ls, (reg_5[(ri+1-initial_sample_5):ri,]))))
-    in_sample[,4]<-exp((predict(cube, (reg_5[(ri+1-initial_sample_5):ri,]))))
-    in_sample[,5]<-exp((predict(lasso.mod, as.matrix((reg_5[(ri+1-initial_sample_5):ri,-1])))))
-    in_sample[,6]<-exp(((as.matrix(cbind(1,reg_5[(ri+1-initial_sample_5):ri,-1])))%*%B1))
-    in_sample[,7]<-exp((reg_5[(ri+1-initial_sample_5):ri,1])) 
-    
-    
-    
-    #QLIKE
-    QLIKE <- function(x) {
-      reta<-x[1]+ in_sample[,1]*x[2] +in_sample[,2]*x[3] +in_sample[,3]*x[4] +
-        in_sample[,4]*x[5] +in_sample[,5]*x[6]++in_sample[,6]*x[7]
+    ######################
+    ####Prior Sin
+    ######################
+    if(ri==initial_sample_1){
+      strong1<-seq(2,10,2)
+      strong2<-seq(2,10,2)
+      strong3<-1/seq(2,10,2)
+      strong4<-1/seq(2,10,2)
+      gridvar24<-c(seq(0,1,1/3)[3],seq(0,1,1/3)[2:3])
+      gridvar622<-c(seq(0,1,1/10)[9:2],seq(0,1,1/10)[2:9])
+      loopgrid<-expand.grid(strong1,strong2,strong3,strong4)
+      loopgrid<-cbind(loopgrid,0)
+      colnames(loopgrid)<-c("strong1","strong2","strong3","strong4","MSE")
+      B0<-rep(0,23)
+      B0[c(2,6,23)]<-0.3
+      B0[c(1)]<-0.01
       
-      sum(in_sample[,7]/reta-log(in_sample[,7]/reta)-1)
+      for(bayhat in 1:nrow(loopgrid)){
+        #Training Data
+        train<-sample(nrow(yx), 0.8*nrow(yx))
+        yx_train<-yx[train,]
+        x_train<-yx_train[,-1]
+        y_train<-yx_train[,1]
+        yx_test<-yx[-train,]
+        x_test<-yx_test[,-1]
+        y_test<-yx_test[,1]
+        
+        V0<-diag(c(0.2,0.2,(gridvar24^loopgrid[bayhat,1])*loopgrid[bayhat,3],0.2,(gridvar622^loopgrid[bayhat,2])*loopgrid[bayhat,4],0.2))
+        x_bayes<-cbind(1,x_train)
+        bols<-solve(t(x_bayes)%*%x_bayes)%*%t(x_bayes)%*%y_train
+        V1<-solve(solve(V0)+t(x_bayes)%*%x_bayes)
+        B1<-V1%*%(solve(V0)%*%B0+t(x_bayes)%*%x_bayes%*%bols)
+        
+        loopforecast<-cbind(1,x_test)%*%B1
+        error_mse<-sum(MCS::LossVol(evaluated=loopforecast,realized=y_test,which='SE1'))
+        error_qlike<-sum(MCS::LossVol(evaluated=loopforecast,realized=y_test,which='QLIKE'))
+        loopgrid[bayhat,5]<-error_mse
+      }
+      
+      optsin_mse<-which.min(loopgrid[,5])
+      V0_sin<-diag(c(0.2,0.2,(gridvar24^loopgrid[bayhat,1])*loopgrid[bayhat,3],0.2,(gridvar622^loopgrid[bayhat,2])*loopgrid[bayhat,4],0.2))
+      write.csv(loopgrid,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//treated_variables//Artigo André//otimobayes//5step sin %s.csv",asset))
     }
     
     
+    #Make the bayesian estimation
+    B0<-rep(0,23)
+    B0[c(2,6,23)]<-0.3
+    B0[c(1)]<-0.01
+    x_bayes<-cbind(1,x)
+    bols<-solve(t(x_bayes)%*%x_bayes)%*%t(x_bayes)%*%y
+    V1<-solve(solve(V0_sin)+t(x_bayes)%*%x_bayes)
+    B1_SIN<-V1%*%(solve(V0_sin)%*%B0+t(x_bayes)%*%x_bayes%*%bols)
+    
+    
+    
+    ######################
+    ####Prior Exp
+    ######################
+    
+    if(ri==initial_sample_5){
+      B0<-rep(0,23)
+      par1<-10^seq(0,0.5,0.005)
+      par2<-1/(1:10)
+      Var<-1:22
+      loopgrid<-cbind(expand.grid(par1,par2),NA)
+      colnames(loopgrid)<-c("par1","par2","MSE")
+      
+      for(bayhat in 1:nrow(loopgrid)){
+        #Training Data
+        train<-sample(nrow(yx), 0.8*nrow(yx))
+        yx_train<-yx[train,]
+        x_train<-yx_train[,-1]
+        y_train<-yx_train[,1]
+        yx_test<-yx[-train,]
+        x_test<-yx_test[,-1]
+        y_test<-yx_test[,1]
+        
+        
+        V0<-diag(c(1,(seq(loopgrid[bayhat,2],0,-loopgrid[bayhat,2]/22)[1:22])^loopgrid[bayhat,1]))
+        x_bayes<-cbind(1,x_train)
+        bols<-solve(t(x_bayes)%*%x_bayes)%*%t(x_bayes)%*%y_train
+        V1<-solve(solve(V0)+t(x_bayes)%*%x_bayes)
+        B1<-V1%*%(solve(V0)%*%B0+t(x_bayes)%*%x_bayes%*%bols)
+        
+        loopforecast<-cbind(1,x_test)%*%B1
+        error_mse<-sum(MCS::LossVol(evaluated=loopforecast,realized=y_test,which='SE1'))
+        error_qlike<-sum(MCS::LossVol(evaluated=loopforecast,realized=y_test,which='QLIKE'))
+        loopgrid[bayhat,3]<-error_mse
+      }
+      optexp_mse<-which.min(loopgrid[,3])
+      V0_exp<-diag(c(1,(seq(loopgrid[optexp_mse,2],0,-loopgrid[optexp_mse,2]/22)[1:22])^loopgrid[optexp_mse,1]))
+      write.csv(loopgrid,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//treated_variables//Artigo André//otimobayes//5step exp %s.csv",asset))
+    }
+    
+    #Make the bayesian estimation
+    B0<-rep(0,23)
+    x_bayes<-cbind(1,x)
+    bols<-solve(t(x_bayes)%*%x_bayes)%*%t(x_bayes)%*%y
+    V1<-solve(solve(V0_exp)+t(x_bayes)%*%x_bayes)
+    B1_EXP<-V1%*%(solve(V0_exp)%*%B0+t(x_bayes)%*%x_bayes%*%bols)
+    
+    ######################
+    ####Forecasts
+    ######################
+    x_nn_pred<-t((matrix(reg_5[(ri+1),-1])-m_x)/sd_x)
+    x_nn_pred<-array(x_nn_pred,dim = c(nrow(x_nn_pred),1,ncol(x_nn_pred)))
+    y_nn <- (y - mean(y)) / sd(y)
+    m_y<-mean(y)
+    sd_y<-sd(y)
+    
+    
+    
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1] = exp(predict(ls, (reg_5[(ri+1),])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),2] = exp(predict(lasso.mod, as.matrix((reg_5[(ri+1),-1]))))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),3] = exp(predict(M5_model, (reg_5[(ri+1),])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),4] = exp(predict(M5_bag, (reg_5[(ri+1),])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),5] = exp(predict(cube, as.matrix((reg_5[(ri+1),-1]))))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),6] = exp((c(1,matrix(reg_5[(ri+1),-1]))%*%B1_SIN))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),7] = exp((c(1,matrix(reg_5[(ri+1),-1]))%*%B1_EXP))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),8] = exp((predictr(RNN,X=x_nn_pred)*sd_y)+m_y)
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),9] = exp((predictr(LSTM,X=x_nn_pred)*sd_y)+m_y)
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),10] = exp((predictr(GRU,X=x_nn_pred)*sd_y)+m_y)
+    
+    
+    
+    in_sample<-as.matrix((reg_5[(ri-round(0.8*nrow(reg_5))+1):ri,1]))*0
+    in_sample<-cbind(in_sample,in_sample,in_sample,in_sample,in_sample,in_sample,in_sample,in_sample)
+    colnames(in_sample)<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp","Realized")
+    
+    x_nnin<-(reg_5[(ri+1-initial_sample_5):ri,-1]-t(replicate(ri-(ri-initial_sample_5), m_x)))/
+      t(replicate(ri-(ri-initial_sample_5), sd_x))
+    x_nnin<-array(x_nnin,dim = c(nrow(x),1,ncol(x)))
+    
+    
+    in_sample[,1]<-exp((predict(ls, (reg_5[(ri+1-initial_sample_5):ri,]))))
+    in_sample[,2]<-exp((predict(lasso.mod, as.matrix((reg_5[(ri+1-initial_sample_5):ri,-1])))))
+    in_sample[,3]<-exp((predict(M5_model, (reg_5[(ri+1-initial_sample_5):ri,]))))
+    in_sample[,4]<-exp((predict(M5_bag, (reg_5[(ri+1-initial_sample_5):ri,]))))
+    in_sample[,5]<-exp((predict(cube, (reg_5[(ri+1-initial_sample_5):ri,]))))
+    in_sample[,6]<-exp(((as.matrix(cbind(1,reg_5[(ri+1-initial_sample_5):ri,-1])))%*%B1_SIN))
+    in_sample[,7]<-exp(((as.matrix(cbind(1,reg_5[(ri+1-initial_sample_5):ri,-1])))%*%B1_EXP))
+    in_sample[,8]<-exp(y) 
+    
+    ######################
+    ####Finds Regression Combinations
+    ######################
+    QLIKE <- function(x) {
+      reta<-x[1]+ in_sample[,1]*x[2] +in_sample[,2]*x[3] +in_sample[,3]*x[4] +
+        in_sample[,4]*x[5] +in_sample[,5]*x[6]+in_sample[,6]*x[7]+in_sample[,7]*x[8]
+      
+      sum(in_sample[,8]/reta-log(in_sample[,8]/reta)-1)
+    }
     
     MSE <- function(x) {
       reta<-x[1]+ in_sample[,1]*x[2] +in_sample[,2]*x[3] +in_sample[,3]*x[4] +
-        in_sample[,4]*x[5] +in_sample[,5]*x[6]+in_sample[,6]*x[7]
+        in_sample[,4]*x[5] +in_sample[,5]*x[6]+in_sample[,6]*x[7]+in_sample[,7]*x[8]
       
       sum((reta-in_sample[,7])^2)
     }
     
-    
     equal <- function(x) {
-      x[2]+x[3]+x[4]+x[5]+x[6]+x[7]
+      x[2]+x[3]+x[4]+x[5]+x[6]+x[7]+x[8]
     }
     
-    par_MSE_POS<-solnp(pars=c(0,1/6,1/6,1/6,1/6,1/6,1/6), #starting values (random - obviously need to be positive and sum to 15)
+    par_MSE_POS<-solnp(pars=c(0,1/7,1/7,1/7,1/7,1/7,1/7,1/7), #starting values (random - obviously need to be positive and sum to 15)
                        fun=MSE,
-                       LB=c(-10,0,0,0,0,0,0), #lower bound for parameters i.e. greater than zero
+                       LB=c(-10,0,0,0,0,0,0,0), 
                        control=list(tol=.Machine$double.eps)
     )$pars
     
-    par_QLIKE_POS<-solnp(pars=c(1,1,1,1,1,1,1), #starting values (random - obviously need to be positive and sum to 15)
+    par_QLIKE_POS<-solnp(pars=c(1,1,1,1,1,1,1,1), #starting values (random - obviously need to be positive and sum to 15)
                          fun=QLIKE,
-                         LB=c(-10,0,0,0,0,0,0), #lower bound for parameters i.e. greater than zero
+                         LB=c(-10,0,0,0,0,0,0,0), #lower bound for parameters i.e. greater than zero
                          control=list(tol=.Machine$double.eps)
     )$pars
     
-    par_MSE_POS_1<-solnp(pars=c(0,0.2,0.2,0.2,0.2,0.1,0.1), #starting values (random - obviously need to be positive and sum to 15)
+    par_MSE_POS_1<-solnp(pars=c(0,0.2,0.2,0.2,0.1,0.1,0.1,0.1), #starting values (random - obviously need to be positive and sum to 15)
                          fun=MSE,
-                         LB=c(-1,0,0,0,0,0,0), 
+                         LB=c(-1,0,0,0,0,0,0,0), 
                          eqfun=equal, #equality function 
                          eqB=1,   #the equality constraint
                          control=list(tol=.Machine$double.eps)
     )$pars
     
-    par_QLIKE_POS_1<-solnp(pars=c(0,0.2,0.2,0.2,0.2,0.1,0.1), #starting values (random - obviously need to be positive and sum to 15)
+    par_QLIKE_POS_1<-solnp(pars=c(0,0.2,0.2,0.2,0.1,0.1,0.1,0.1), #starting values (random - obviously need to be positive and sum to 15)
                            fun=QLIKE,
-                           LB=c(-1,0,0,0,0,0,0), 
+                           LB=c(-1,0,0,0,0,0,0,0),
                            eqfun=equal, #equality function 
                            eqB=1,   #the equality constraint
                            control=list(tol=.Machine$double.eps)
     )$pars
     
     
+    
     if(ri==initial_sample_5){
       dma_weigths_MSE<-dma_weigths_MSE
       dma_weigths_QLIKE<-dma_weigths_QLIKE
     } else{
-      real<-rep((predicted_5step[(ri-initial_sample_5),ncol(predicted_5step)]),models)
-      fore<-(predicted_5step[(ri-initial_sample_5),1:6])
+      real<-rep((predicted_5step[(ri-round(0.8*nrow(reg))),ncol(predicted_5step)]),10)
+      fore<-(predicted_5step[(ri-round(0.8*nrow(reg))),1:10])
       
       erro_MSE<-(fore-real)^2
+      #tinha um erro aqui
       sum1   = dma_weigths_MSE%*%(t(erro_MSE)^-1)
-      pi_t_k = ((as.numeric(dma_weigths_MSE)/c(erro_MSE)))/as.numeric(sum1)
+      pi_t_k = (as.numeric(dma_weigths_MSE)/c(erro_MSE))/as.numeric(sum1)
       sum2   = sum(pi_t_k^(forget_rate))
       dma_weigths_MSE = pi_t_k^(forget_rate)/as.numeric(sum2)
       
       erro_QLIKE<-(real)/(fore)-log((real)/(fore))-1
       sum1   = as.numeric(dma_weigths_QLIKE)%*%(t(erro_QLIKE)^-1)
-      pi_t_k = (as.numeric(dma_weigths_QLIKE)/erro_QLIKE)/as.numeric(sum1)
+      pi_t_k = as.numeric(dma_weigths_QLIKE)/erro_QLIKE/as.numeric(sum1)
       sum2   = sum(pi_t_k^(forget_rate))
       dma_weigths_QLIKE = pi_t_k^(forget_rate)/as.numeric(sum2)
     }
     
+    weights_5step[(ri-round(0.8*nrow(reg_5))+1),]<-c(par_MSE_POS,par_QLIKE_POS,par_MSE_POS_1,par_MSE_POS_1,dma_weigths_MSE,dma_weigths_QLIKE)
     
-    
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),7]<-sum(c(par_MSE_POS)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:6])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),8]<-sum(c(par_QLIKE_POS)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:6])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),9]<-sum(c(par_MSE_POS_1)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:6])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),10]<-sum(c(par_QLIKE_POS_1)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:6])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),11]<-(dma_weigths_MSE%*%t((predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:6])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),12]<-(dma_weigths_QLIKE%*%t((predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:6])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),11]<-sum(c(par_MSE_POS)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),12]<-sum(c(par_QLIKE_POS)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),13]<-sum(c(par_MSE_POS_1)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),14]<-sum(c(par_QLIKE_POS_1)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),15]<-(dma_weigths_MSE%*%t((predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:10])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),16]<-(dma_weigths_QLIKE%*%t((predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:10])))
   }
-  
-  
-  write.csv(index(predicted_1step),"C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//Dates_1.csv")
-  write.csv(index(predicted_5step),"C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//Dates_5.csv")
-  
-  write.csv(predicted_1step,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//predicted_1step_%s.csv",asset))
+  write.csv(weights_5step,sprinf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//weights5 %s.csv",asset))
+  write.csv(index(predicted_5step),sprinf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//dates5 %s.csv",asset))
   write.csv(predicted_5step,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//predicted_5step_%s.csv",asset))
 }
-
-
-
