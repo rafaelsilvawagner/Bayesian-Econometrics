@@ -14,7 +14,7 @@ library(MASS)
 #Our assets
 assets<-c("AAPL","EBAY","GS","MSFT","PG","ABT","BAC","CVX","GE","CAT")
 #Our models
-models<-c("HAR","Tree","Bagging","Cubist","Lasso","Bayes","Comb_POS","Comb_POS_1","DMA")
+models<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp","Comb_POS","Comb_POS_1","DMA")
 
 forecasts_1<-list()
 for(asset in 1:length(assets)){
@@ -335,6 +335,14 @@ for(m in 1:length(assets)){
   MCS_QLIKE_5[,m]<-row.names(MCS_QLIKE_5)%in%row.names(MCSQLIKE@show)
 }
 
+plotar<-as.ts(MSE_Errors[-1,],order.by=as.Date(dates[,2]))
+Errors_MSE<-plotar[,c("HAR","Lasso","Comb_POS","Comb_POS_1")]
+colnames(Errors_MSE)<-c("HAR","Lasso","COMB_POS","COMB_POS_1")
+meltdf <- melt(Errors_MSE,id=as.Date(dates[,2]))
+ggplot(meltdf,aes(x=Var1,y=value,colour=Var2,group=Var2)) + geom_line()+ylim(0,0.00000001)
+autoplot(Errors_MSE)
+
+
 
 #Gráficos
 test<-(forecasts_1[[4]])
@@ -364,6 +372,8 @@ GS<-xts(as.ts(test[,c(2,3,6,8,10,13)]),order.by=as.Date(dates[,2]))
 autoplot(GS)
 GS<-as.ts(GS)
 autoplot(GS)
+
+
 
 
 
