@@ -2,7 +2,7 @@
 ############################################################LOAD PACKAGES###############################################################
 ########################################################################################################################################
 
-require(rnn)
+
 require(xts)
 require(data.table)
 require(highfrequency)
@@ -12,6 +12,7 @@ require(RWeka)
 require(randomGLM)
 require(Cubist)
 require(colf)
+require(keras)
 require(xgboost)
 require(MCS)
 require(glmnet)
@@ -74,7 +75,7 @@ forecasts_5step<-list()
 
 #You'll do everything for all assets
 #for(asset in 1:length(assets)){
-for(asset in 7:10){
+for(asset in 9:10){
   
   #catch the realized Var for the asset
   Var<-realizedVar[,asset]
@@ -98,7 +99,7 @@ for(asset in 7:10){
   index(reg_5)<-index(reg_1)[5:nrow(reg_1)]
   
   #Create matrix to store the results
-  models<-10
+  models<-7
   comb<-6
   
   initial_sample_1<-round(0.8*nrow(reg_1))
@@ -114,23 +115,22 @@ for(asset in 7:10){
   predicted_5step<-xts(x=predicted_5step,order.by=index(reg_5)[(initial_sample_5+1):(nrow(reg_5))])
   
   
-  colnames(predicted_1step)<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp","RNN","LSTM",
-                               "GRU","Comb_MSE_Pos","Comb_QLIKE_Pos",
+  colnames(predicted_1step)<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp",
+                               "Comb_MSE_Pos","Comb_QLIKE_Pos",
                                "Comb_MSE_Pos_1","Comb_QLIKE_Pos_1","DMA_MSE","DMA_QLIKE","Realized")
   
-  colnames(predicted_5step)<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp","RNN","LSTM",
-                               "GRU","Comb_MSE_Pos","Comb_QLIKE_Pos","Comb_MSE_Pos_1",
+  colnames(predicted_5step)<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp",
+                               "Comb_MSE_Pos","Comb_QLIKE_Pos","Comb_MSE_Pos_1",
                                "Comb_QLIKE_Pos_1","DMA_MSE","DMA_QLIKE","Realized")
   
   
   ######Weights
-  weights_1step<-matrix(NA,nrow=total_forecasts_1,ncol=52)
-  weights_5step<-matrix(NA,nrow=total_forecasts_1,ncol=52)
-  
+  weights_1step<-matrix(NA,nrow=total_forecasts_1,ncol=46)
+  weights_5step<-matrix(NA,nrow=total_forecasts_1,ncol=46)
   
   #Start the dinamic moving average weights
-  dma_weigths_MSE<-rep(1/(10),10)
-  dma_weigths_QLIKE<-rep(1/(10),10)
+  dma_weigths_MSE<-rep(1/(7),7)
+  dma_weigths_QLIKE<-rep(1/(7),7)
   forget_rate=0.95
   
   for(ri in initial_sample_1:(nrow(reg_1)-1)){
@@ -175,43 +175,30 @@ for(asset in 7:10){
     ######################
     ####Neural Networks 
     ######################
-    m_x<-colMeans(x)
-    sd_x<-colSds(x)
     
-    x_nn<-(x-t(replicate(nrow(x), m_x)))/t(replicate(nrow(x), sd_x))
-    x_nn<-array(x_nn,dim = c(nrow(x),1,ncol(x)))
-    y_nn <- (y - mean(y)) / sd(y)
-    m_y<-mean(y)
-    sd_y<-sd(y)
-    
-    if(ri==initial_sample_1){
+    #if(ri==initial_sample_1){
       #RNN
-      RNN<-trainr(Y=y_nn, X=x_nn, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 1)
+    #  RNN<-trainr(Y=yt, X=xt, network_type = "rnn",learningrate=.001,numepochs = 5)
       #LSTM
-      LSTM<-trainr(Y=y_nn, X=x_nn, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 1)
+    #  LSTM<-trainr(Y=yt, X=xt, network_type = "lstm", learningrate=.001,numepochs = 5)
       #GRU
-      GRU<-trainr(Y=y_nn, X=x_nn, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 1)
-      for(h in 1:50){
+    #  GRU<-trainr(Y=yt, X=xt, network_type = "gru", learningrate=.001,numepochs = 5)
+    #  for(h in 1:20){
         #RNN
-        RNN<-trainr(Y=y_nn, X=x_nn,model=RNN, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 1)
+    #    RNN<-trainr(Y=yt, X=xt,model=RNN, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 5)
         #LSTM
-        LSTM<-trainr(Y=y_nn, X=x_nn,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 1)
+    #    LSTM<-trainr(Y=yt, X=xt,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 5)
         #GRU
-        GRU<-trainr(Y=y_nn, X=x_nn,model=GRU, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 1)
-      }
-    }else{
+    #    GRU<-trainr(Y=yt, X=xt,model=GRU, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 5)
+    #  }
+    #}else{
       #RNN
-      RNN<-trainr(Y=y_nn, X=x_nn,model=RNN, network_type = "rnn", use_bias = T,learningrate=.01,numepochs = 1)
+    #  RNN<-trainr(Y=yt, X=xt,model=RNN, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 5)
       #LSTM
-      LSTM<-trainr(Y=y_nn, X=x_nn,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.01,numepochs = 1)
+    #  LSTM<-trainr(Y=yt, X=xt,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 5)
       #GRU
-      GRU<-trainr(Y=y_nn, X=x_nn,model=GRU, network_type = "gru", use_bias = T,learningrate=.01,numepochs = 1)
-    }
-    
-    
-    
-    
-    
+    #  GRU<-trainr(Y=yt, X=xt,model=GRU, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 5)
+    #}
     
     ##################################################################################################################
     ##################################################################################################################
@@ -330,13 +317,6 @@ for(asset in 7:10){
     ######################
     ####Forecasts
     ######################
-    x_nn_pred<-t((matrix(reg_1[(ri+1),-1])-m_x)/sd_x)
-    x_nn_pred<-array(x_nn_pred,dim = c(nrow(x_nn_pred),1,ncol(x_nn_pred)))
-    y_nn <- (y - mean(y)) / sd(y)
-    m_y<-mean(y)
-    sd_y<-sd(y)
-    
-
     
     predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1] = exp(predict(ls, (reg_1[(ri+1),])))
     predicted_1step[(ri-round(0.8*nrow(reg_1))+1),2] = exp(predict(lasso.mod, as.matrix((reg_1[(ri+1),-1]))))
@@ -345,20 +325,12 @@ for(asset in 7:10){
     predicted_1step[(ri-round(0.8*nrow(reg_1))+1),5] = exp(predict(cube, as.matrix((reg_1[(ri+1),-1]))))
     predicted_1step[(ri-round(0.8*nrow(reg_1))+1),6] = exp((c(1,matrix(reg_1[(ri+1),-1]))%*%B1_SIN))
     predicted_1step[(ri-round(0.8*nrow(reg_1))+1),7] = exp((c(1,matrix(reg_1[(ri+1),-1]))%*%B1_EXP))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),8] = exp((predictr(RNN,X=x_nn_pred)*sd_y)+m_y)
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),9] = exp((predictr(LSTM,X=x_nn_pred)*sd_y)+m_y)
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),10] = exp((predictr(GRU,X=x_nn_pred)*sd_y)+m_y)
-    
     
     
     in_sample<-as.matrix((reg_1[(ri-round(0.8*nrow(reg_1))+1):ri,1]))*0
     in_sample<-cbind(in_sample,in_sample,in_sample,in_sample,in_sample,in_sample,in_sample,in_sample)
     colnames(in_sample)<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp","Realized")
-    
-    x_nnin<-(reg_1[(ri+1-initial_sample_1):ri,-1]-t(replicate(ri-(ri-initial_sample_1), m_x)))/
-      t(replicate(ri-(ri-initial_sample_1), sd_x))
-    x_nnin<-array(x_nnin,dim = c(nrow(x),1,ncol(x)))
-    
+
     
     in_sample[,1]<-exp((predict(ls, (reg_1[(ri+1-initial_sample_1):ri,]))))
     in_sample[,2]<-exp((predict(lasso.mod, as.matrix((reg_1[(ri+1-initial_sample_1):ri,-1])))))
@@ -383,7 +355,7 @@ for(asset in 7:10){
       reta<-x[1]+ in_sample[,1]*x[2] +in_sample[,2]*x[3] +in_sample[,3]*x[4] +
         in_sample[,4]*x[5] +in_sample[,5]*x[6]+in_sample[,6]*x[7]+in_sample[,7]*x[8]
       
-      sum((reta-in_sample[,7])^2)
+      sum((reta-in_sample[,8])^2)
     }
     
     equal <- function(x) {
@@ -404,7 +376,7 @@ for(asset in 7:10){
     
     par_MSE_POS_1<-solnp(pars=c(0,0.2,0.2,0.2,0.1,0.1,0.1,0.1), #starting values (random - obviously need to be positive and sum to 15)
                          fun=MSE,
-                         LB=c(-1,0,0,0,0,0,0,0), 
+                         LB=c(-10,0,0,0,0,0,0,0), 
                          eqfun=equal, #equality function 
                          eqB=1,   #the equality constraint
                          control=list(tol=.Machine$double.eps)
@@ -424,8 +396,8 @@ for(asset in 7:10){
       dma_weigths_MSE<-dma_weigths_MSE
       dma_weigths_QLIKE<-dma_weigths_QLIKE
     } else{
-      real<-rep((predicted_1step[(ri-round(0.8*nrow(reg))),ncol(predicted_1step)]),10)
-      fore<-(predicted_1step[(ri-round(0.8*nrow(reg))),1:10])
+      real<-rep((predicted_1step[(ri-round(0.8*nrow(reg))),ncol(predicted_1step)]),7)
+      fore<-(predicted_1step[(ri-round(0.8*nrow(reg))),1:7])
       
       erro_MSE<-(fore-real)^2
       #tinha um erro aqui
@@ -443,16 +415,16 @@ for(asset in 7:10){
     
     weights_1step[(ri-round(0.8*nrow(reg_1))+1),]<-c(par_MSE_POS,par_QLIKE_POS,par_MSE_POS_1,par_MSE_POS_1,dma_weigths_MSE,dma_weigths_QLIKE)
     
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),11]<-sum(c(par_MSE_POS)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),12]<-sum(c(par_QLIKE_POS)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),13]<-sum(c(par_MSE_POS_1)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),14]<-sum(c(par_QLIKE_POS_1)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),15]<-(dma_weigths_MSE%*%t((predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:10])))
-    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),16]<-(dma_weigths_QLIKE%*%t((predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:10])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),8]<-sum(c(par_MSE_POS)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),9]<-sum(c(par_QLIKE_POS)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),10]<-sum(c(par_MSE_POS_1)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),11]<-sum(c(par_QLIKE_POS_1)*(c(1,predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),12]<-(dma_weigths_MSE%*%t((predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
+    predicted_1step[(ri-round(0.8*nrow(reg_1))+1),13]<-(dma_weigths_QLIKE%*%t((predicted_1step[(ri-round(0.8*nrow(reg_1))+1),1:7])))
   }
   
-  write.csv(weights_1step,sprinf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//weights1 %s.csv",asset))
-  write.csv(index(predicted_5step),sprinf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//dates1 %s.csv",asset))
+  write.csv(weights_1step,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//weights1 %s.csv",asset))
+  write.csv(index(predicted_5step),sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//dates1 %s.csv",asset))
   write.csv(predicted_1step,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//predicted_1step_%s.csv",asset))
   
   
@@ -483,7 +455,7 @@ for(asset in 7:10){
     ######################
     
     #HAR
-    ls<-lm(Close~Close.1+Close.5+Close.22,data = yx)
+    ls<-lm(Close~Close.6+Close.10+Close.27,data = yx)
     #Lasso
     cv.out <- cv.glmnet(x=as.matrix(x), y=as.matrix(y), alpha=1)
     lasso.mod <- glmnet(x=as.matrix(x), y=as.matrix(y), lambda=cv.out$lambda.1se,alpha=1)
@@ -502,38 +474,38 @@ for(asset in 7:10){
     ######################
     ####Neural Networks 
     ######################
-    m_x<-colMeans(x)
-    sd_x<-colSds(x)
+    #m_x<-colMeans(x)
+    #sd_x<-colSds(x)
     
-    x_nn<-(x-t(replicate(nrow(x), m_x)))/t(replicate(nrow(x), sd_x))
-    x_nn<-array(x_nn,dim = c(nrow(x),1,ncol(x)))
-    y_nn <- (y - mean(y)) / sd(y)
-    m_y<-mean(y)
-    sd_y<-sd(y)
+    #x_nn<-(x-t(replicate(nrow(x), m_x)))/t(replicate(nrow(x), sd_x))
+    #x_nn<-array(x_nn,dim = c(nrow(x),1,ncol(x)))
+    #y_nn <- (y - mean(y)) / sd(y)
+    #m_y<-mean(y)
+    #sd_y<-sd(y)
     
-    if(ri==initial_sample_5){
+    #if(ri==initial_sample_5){
       #RNN
-      RNN<-trainr(Y=y_nn, X=x_nn, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 1)
+    #  RNN<-trainr(Y=y_nn, X=x_nn, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 1)
       #LSTM
-      LSTM<-trainr(Y=y_nn, X=x_nn, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 1)
+    #  LSTM<-trainr(Y=y_nn, X=x_nn, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 1)
       #GRU
-      GRU<-trainr(Y=y_nn, X=x_nn, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 1)
-      for(h in 1:50){
+    #  GRU<-trainr(Y=y_nn, X=x_nn, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 1)
+    #  for(h in 1:50){
         #RNN
-        RNN<-trainr(Y=y_nn, X=x_nn,model=RNN, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 1)
+    #    RNN<-trainr(Y=y_nn, X=x_nn,model=RNN, network_type = "rnn", use_bias = T,learningrate=.001,numepochs = 1)
         #LSTM
-        LSTM<-trainr(Y=y_nn, X=x_nn,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 1)
+    #    LSTM<-trainr(Y=y_nn, X=x_nn,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.001,numepochs = 1)
         #GRU
-        GRU<-trainr(Y=y_nn, X=x_nn,model=GRU, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 1)
-      }
-    }else{
+    #    GRU<-trainr(Y=y_nn, X=x_nn,model=GRU, network_type = "gru", use_bias = T,learningrate=.001,numepochs = 1)
+    #  }
+    #}else{
       #RNN
-      RNN<-trainr(Y=y_nn, X=x_nn,model=RNN, network_type = "rnn", use_bias = T,learningrate=.01,numepochs = 1)
+    #  RNN<-trainr(Y=y_nn, X=x_nn,model=RNN, network_type = "rnn", use_bias = T,learningrate=.01,numepochs = 1)
       #LSTM
-      LSTM<-trainr(Y=y_nn, X=x_nn,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.01,numepochs = 1)
+    #  LSTM<-trainr(Y=y_nn, X=x_nn,model=LSTM, network_type = "lstm", use_bias = T,learningrate=.01,numepochs = 1)
       #GRU
-      GRU<-trainr(Y=y_nn, X=x_nn,model=GRU, network_type = "gru", use_bias = T,learningrate=.01,numepochs = 1)
-    }
+    #  GRU<-trainr(Y=y_nn, X=x_nn,model=GRU, network_type = "gru", use_bias = T,learningrate=.01,numepochs = 1)
+    #}
     
     ##################################################################################################################
     ##################################################################################################################
@@ -652,13 +624,6 @@ for(asset in 7:10){
     ######################
     ####Forecasts
     ######################
-    x_nn_pred<-t((matrix(reg_5[(ri+1),-1])-m_x)/sd_x)
-    x_nn_pred<-array(x_nn_pred,dim = c(nrow(x_nn_pred),1,ncol(x_nn_pred)))
-    y_nn <- (y - mean(y)) / sd(y)
-    m_y<-mean(y)
-    sd_y<-sd(y)
-    
-    
     
     predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1] = exp(predict(ls, (reg_5[(ri+1),])))
     predicted_5step[(ri-round(0.8*nrow(reg_5))+1),2] = exp(predict(lasso.mod, as.matrix((reg_5[(ri+1),-1]))))
@@ -667,19 +632,11 @@ for(asset in 7:10){
     predicted_5step[(ri-round(0.8*nrow(reg_5))+1),5] = exp(predict(cube, as.matrix((reg_5[(ri+1),-1]))))
     predicted_5step[(ri-round(0.8*nrow(reg_5))+1),6] = exp((c(1,matrix(reg_5[(ri+1),-1]))%*%B1_SIN))
     predicted_5step[(ri-round(0.8*nrow(reg_5))+1),7] = exp((c(1,matrix(reg_5[(ri+1),-1]))%*%B1_EXP))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),8] = exp((predictr(RNN,X=x_nn_pred)*sd_y)+m_y)
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),9] = exp((predictr(LSTM,X=x_nn_pred)*sd_y)+m_y)
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),10] = exp((predictr(GRU,X=x_nn_pred)*sd_y)+m_y)
-    
     
     
     in_sample<-as.matrix((reg_5[(ri-round(0.8*nrow(reg_5))+1):ri,1]))*0
     in_sample<-cbind(in_sample,in_sample,in_sample,in_sample,in_sample,in_sample,in_sample,in_sample)
     colnames(in_sample)<-c("HAR","Lasso","M5P","Bagging","Cubist","Bayes_Sin","Bayes_exp","Realized")
-    
-    x_nnin<-(reg_5[(ri+1-initial_sample_5):ri,-1]-t(replicate(ri-(ri-initial_sample_5), m_x)))/
-      t(replicate(ri-(ri-initial_sample_5), sd_x))
-    x_nnin<-array(x_nnin,dim = c(nrow(x),1,ncol(x)))
     
     
     in_sample[,1]<-exp((predict(ls, (reg_5[(ri+1-initial_sample_5):ri,]))))
@@ -705,7 +662,7 @@ for(asset in 7:10){
       reta<-x[1]+ in_sample[,1]*x[2] +in_sample[,2]*x[3] +in_sample[,3]*x[4] +
         in_sample[,4]*x[5] +in_sample[,5]*x[6]+in_sample[,6]*x[7]+in_sample[,7]*x[8]
       
-      sum((reta-in_sample[,7])^2)
+      sum((reta-in_sample[,8])^2)
     }
     
     equal <- function(x) {
@@ -746,8 +703,8 @@ for(asset in 7:10){
       dma_weigths_MSE<-dma_weigths_MSE
       dma_weigths_QLIKE<-dma_weigths_QLIKE
     } else{
-      real<-rep((predicted_5step[(ri-round(0.8*nrow(reg))),ncol(predicted_5step)]),10)
-      fore<-(predicted_5step[(ri-round(0.8*nrow(reg))),1:10])
+      real<-rep((predicted_5step[(ri-round(0.8*nrow(reg_5))),ncol(predicted_5step)]),7)
+      fore<-(predicted_5step[(ri-round(0.8*nrow(reg_5))),1:7])
       
       erro_MSE<-(fore-real)^2
       #tinha um erro aqui
@@ -765,14 +722,18 @@ for(asset in 7:10){
     
     weights_5step[(ri-round(0.8*nrow(reg_5))+1),]<-c(par_MSE_POS,par_QLIKE_POS,par_MSE_POS_1,par_MSE_POS_1,dma_weigths_MSE,dma_weigths_QLIKE)
     
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),11]<-sum(c(par_MSE_POS)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),12]<-sum(c(par_QLIKE_POS)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),13]<-sum(c(par_MSE_POS_1)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),14]<-sum(c(par_QLIKE_POS_1)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),15]<-(dma_weigths_MSE%*%t((predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:10])))
-    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),16]<-(dma_weigths_QLIKE%*%t((predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:10])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),8]<-sum(c(par_MSE_POS)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),9]<-sum(c(par_QLIKE_POS)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),10]<-sum(c(par_MSE_POS_1)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),11]<-sum(c(par_QLIKE_POS_1)*(c(1,predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
+    
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),12]<-(dma_weigths_MSE%*%t((predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
+    predicted_5step[(ri-round(0.8*nrow(reg_5))+1),13]<-(dma_weigths_QLIKE%*%t((predicted_5step[(ri-round(0.8*nrow(reg_5))+1),1:7])))
   }
-  write.csv(weights_5step,sprinf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//weights5 %s.csv",asset))
-  write.csv(index(predicted_5step),sprinf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//dates5 %s.csv",asset))
+  write.csv(weights_5step,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//weights5 %s.csv",asset))
+  write.csv(index(predicted_5step),sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//dates5 %s.csv",asset))
   write.csv(predicted_5step,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Combinations//predicted_5step_%s.csv",asset))
 }
+
+
+
