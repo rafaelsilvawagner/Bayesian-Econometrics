@@ -77,7 +77,7 @@ forecasts_5step<-list()
 ########################################################################################################################################
 
 #You'll do everything for all assets
-for(asset in 9:10){
+for(asset in 1:10){
   Var<-realizedVar[,asset]
   reg<-cbind(Var,matrix(0,nrow=nrow(Var),ncol=22))
   lags<-matrix(nrow=nrow(reg),ncol=22)
@@ -226,21 +226,6 @@ for(asset in 9:10){
       loopgrid[,3]<-colSums(errou_har)
       write.csv(loopgrid,sprintf("C://Users//Usuario//Desktop//Rafael - Dissertacao//Realized Variance//Bayesian Estimation//Priori Har Ativo %s freq 1.csv",asset))
       
-
-      for(tr in 1:loops){
-        index_train<-tr:(nrow(yx)-round(test*nrow(yx))+tr-1)
-        x_train<-yx[index_train,-1]
-        y_train<-yx[index_train,1]
-        x_test<-yx[last(index_train)+1,-1]
-        y_test<-yx[last(index_train)+1,1]
-        
-        hareando<-lm(Close~Close.1+Close.5+Close.22,cbind(y_train,x_train))
-        
-        loopforecast<-predict(hareando,cbind(y_test,x_test))
-        har_errors[tr]<-(loopforecast-y_test)^2
-      }
-      
-    
     } else {
       
       strong1<-10^(-seq(1,15))
